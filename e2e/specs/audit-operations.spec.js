@@ -474,9 +474,6 @@ describe("Archive operation flows", function () {
       { "hello.txt": PAYLOAD },
       { password: PASSWORD, headers: true },
     );
-    const dest = path.join(dir, "extracted");
-    fs.mkdirSync(dest, { recursive: true });
-
     await openBasicBrowseForArchive(archive);
     // Basic keeps its own browse password field: the failed listing reveals it.
     await clickId("basic-browse-contents");
@@ -527,9 +524,9 @@ describe("Archive operation flows", function () {
     }
     await waitForArchiveIdle();
 
-    // Power extract-path feeds Basic's destination on the Extract view.
-    await setInputValue("#extract-path", dest);
     await clickId("basic-browse-extract-all");
+    const dest = await domValue("#basic-extract-path");
+    assert.equal(dest, path.join(dir, "secret-headers"));
 
     const extracted = path.join(dest, "hello.txt");
     await browser.waitUntil(
@@ -558,6 +555,7 @@ describe("Archive operation flows", function () {
     writeEvidence(EVIDENCE_DIR, "audit-operations-basic-browse-extract-all", {
       scenario: "basic-browse-extract-all",
       archive,
+      destination: dest,
       extractedHello: fs.readFileSync(extracted, "utf8") === PAYLOAD,
       secondPrompt: false,
     });

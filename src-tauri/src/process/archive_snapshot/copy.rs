@@ -363,6 +363,19 @@ where
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     ensure_snapshot_byte_copy_space(source, destination)?;
 
+    copy_archive_snapshot_bytes(source, source_path, destination, should_cancel, on_bytes)
+}
+
+fn copy_archive_snapshot_bytes<C>(
+    source: &mut std::fs::File,
+    source_path: &std::path::Path,
+    destination: &std::path::Path,
+    should_cancel: &C,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<SnapshotStrategy, String>
+where
+    C: Fn() -> bool,
+{
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -450,11 +463,23 @@ where
         });
     }
     #[cfg(windows)]
-    copy_windows_zone_identifier(source_path, destination)?;
+    {
+        if let Err(error) = copy_windows_zone_identifier(source_path, destination) {
+            let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => error,
+                Err(cleanup_error) => {
+                    format!("{error}; partial snapshot cleanup also failed: {cleanup_error}")
+                }
+            });
+        }
+    }
     #[cfg(not(windows))]
     let _ = source_path;
     Ok(SnapshotStrategy::ByteCopy)
 }
+
 fn ensure_snapshot_byte_copy_space(
     source: &std::fs::File,
     destination: &std::path::Path,
@@ -565,5 +590,66 @@ mod progress_tests {
         let _ = std::fs::remove_file(&dest_path);
         assert!(result.is_err(), "cancelled copy must fail");
         assert!(reported.last().copied().unwrap_or(0) < data.len() as u64);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod zone_cleanup_tests {
+    use super::copy_archive_snapshot_bytes;
+
+    struct ScratchDir {
+        path: std::path::PathBuf,
+    }
+
+    impl ScratchDir {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+            loop {
+                let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "zinnia-snapshot-zone-{name}-{}-{id}",
+                    std::process::id()
+                ));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self { path },
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("scratch directory should be created: {error}"),
+                }
+            }
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn invalid_zone_identifier_removes_the_snapshot_and_keeps_the_error() {
+        let scratch = ScratchDir::new("invalid");
+        let source = scratch.path.join("archive.7z");
+        let destination = scratch.path.join("snapshot.7z");
+        std::fs::write(&source, b"archive payload").expect("source archive");
+        let mut zone = source.as_os_str().to_os_string();
+        zone.push(":Zone.Identifier");
+        std::fs::write(std::path::PathBuf::from(zone), b"not a zone identifier")
+            .expect("invalid Zone.Identifier stream");
+        let mut source_file = std::fs::File::open(&source).expect("open source archive");
+
+        let error = copy_archive_snapshot_bytes(
+            &mut source_file,
+            &source,
+            &destination,
+            &|| false,
+            &mut |_: u64| {},
+        )
+        .expect_err("an invalid Zone.Identifier must fail the snapshot");
+
+        assert_eq!(error, "Archive Mark-of-the-Web has an invalid format.");
+        let missing = std::fs::metadata(&destination).expect_err("snapshot must be removed");
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
     }
 }

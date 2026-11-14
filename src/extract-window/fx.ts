@@ -23,6 +23,18 @@ export async function closeWindowSafely(): Promise<void> {
   }
 }
 
+export function followSystemThemeChanges(
+  settings: ExtractWindowFxSettings,
+): void {
+  if (typeof window.matchMedia !== "function") return;
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => {
+      if ((settings?.theme ?? "system") !== "system") return;
+      void syncExtractWindowFx(settings);
+    });
+}
+
 /** Match main-window Basic glass when the user has effects enabled. */
 export async function syncExtractWindowFx(
   settings: ExtractWindowFxSettings,

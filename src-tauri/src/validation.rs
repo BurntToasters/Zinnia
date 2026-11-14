@@ -43,6 +43,24 @@ pub(crate) fn selected_member_count(args: &[String]) -> usize {
     after_separator.saturating_sub(archive)
 }
 
+pub(crate) const EXTRACT_OUTPUT_WILDCARD_MESSAGE: &str =
+    "Zinnia cannot extract into a folder whose path contains '*'. Choose another folder.";
+
+pub(crate) fn reject_extract_output_wildcard(output: &str) -> Result<(), String> {
+    if output.contains('*') {
+        return Err(EXTRACT_OUTPUT_WILDCARD_MESSAGE.to_string());
+    }
+    Ok(())
+}
+
+fn redact_password_token(arg: &str) -> String {
+    if arg.to_ascii_lowercase().starts_with("-p") {
+        "-p<redacted>".to_string()
+    } else {
+        arg.to_string()
+    }
+}
+
 pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Err("Missing 7z arguments".to_string());
@@ -63,7 +81,10 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
 
     let cmd = args[0].as_str();
     if !ALLOWED_7Z_COMMANDS.contains(&cmd) {
-        return Err(format!("7z command '{cmd}' is not permitted."));
+        return Err(format!(
+            "7z command '{}' is not permitted.",
+            redact_password_token(cmd)
+        ));
     }
 
     let mut separator_index = None;
@@ -81,7 +102,8 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             positional_after_separator += 1;
             if has_parent_dir_component(arg) {
                 return Err(format!(
-                    "7z path '{arg}' must not contain a '..' parent-directory segment."
+                    "7z path '{}' must not contain a '..' parent-directory segment.",
+                    redact_password_token(arg)
                 ));
             }
             continue;
@@ -96,18 +118,23 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         // original string using an offset derived from an ASCII prefix match.
         let lower = arg.to_ascii_lowercase();
         if BLOCKED_7Z_ARGS.iter().any(|b| lower.starts_with(b)) {
-            return Err(format!("7z argument '{arg}' is not permitted."));
+            return Err(format!(
+                "7z argument '{}' is not permitted.",
+                redact_password_token(arg)
+            ));
         }
         // Reject @listfile references before -- (7z reads them as file lists with
         // unvalidated contents). After --, the leading @ is literal.
         if arg.starts_with('@') {
             return Err(format!(
-                "7z argument '{arg}' is not permitted (response files are not allowed)."
+                "7z argument '{}' is not permitted (response files are not allowed).",
+                redact_password_token(arg)
             ));
         }
         if has_embedded_listfile(arg) {
             return Err(format!(
-                "7z argument '{arg}' is not permitted (list files are backend-managed only)."
+                "7z argument '{}' is not permitted (list files are backend-managed only).",
+                redact_password_token(arg)
             ));
         }
         if lower.starts_with("-o") {
@@ -125,17 +152,25 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
 
         if arg.starts_with('-') {
             if !is_allowed_switch(cmd, arg) {
-                return Err(format!("7z argument '{arg}' is not permitted."));
+                return Err(format!(
+                    "7z argument '{}' is not permitted.",
+                    redact_password_token(arg)
+                ));
             }
             // -o<dir> sets the extract/output directory; block traversal in it.
             if lower.starts_with("-o") && has_parent_dir_component(&arg[2..]) {
                 return Err(format!(
-                    "7z output path '{arg}' must not contain a '..' parent-directory segment."
+                    "7z output path '{}' must not contain a '..' parent-directory segment.",
+                    redact_password_token(arg)
                 ));
+            }
+            if lower.starts_with("-o") {
+                reject_extract_output_wildcard(&arg[2..])?;
             }
             if switch_contains_parent_traversal(arg) {
                 return Err(format!(
-                    "7z switch '{arg}' must not contain a '..' parent-directory segment."
+                    "7z switch '{}' must not contain a '..' parent-directory segment.",
+                    redact_password_token(arg)
                 ));
             }
             if matches!(cmd, "a" | "u") && is_include_or_exclude(arg) {
@@ -144,14 +179,16 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 // additional file from its working directory.
                 if is_include_switch(arg) {
                     return Err(format!(
-                        "7z include switch '{arg}' is not permitted for compression. Select inputs in the UI instead."
+                        "7z include switch '{}' is not permitted for compression. Select inputs in the UI instead.",
+                        redact_password_token(arg)
                     ));
                 }
                 if include_exclude_payload(arg)
                     .is_some_and(compress_include_exclude_payload_is_unsafe)
                 {
                     return Err(format!(
-                        "7z switch '{arg}' must not name an absolute or escaping host path. Select inputs in the UI instead."
+                        "7z switch '{}' must not name an absolute or escaping host path. Select inputs in the UI instead.",
+                        redact_password_token(arg)
                     ));
                 }
             }
@@ -162,7 +199,8 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             }
             if has_parent_dir_component(arg) {
                 return Err(format!(
-                    "7z path '{arg}' must not contain a '..' parent-directory segment."
+                    "7z path '{}' must not contain a '..' parent-directory segment.",
+                    redact_password_token(arg)
                 ));
             }
         }
@@ -1251,5 +1289,88 @@ mod tests {
         assert_eq!(selected_member_count(&list), 0);
         let no_separator = ["b".to_string()];
         assert_eq!(selected_member_count(&no_separator), 0);
+    }
+
+    const WILDCARD_OUTPUT_MESSAGE: &str =
+        "Zinnia cannot extract into a folder whose path contains '*'. Choose another folder.";
+
+    #[test]
+    fn validate_run_7z_args_rejects_wildcard_in_extract_output_ancestor() {
+        let args = [
+            "x",
+            "-o/tmp/x/an*cestor/.zinnia-extract-abc",
+            "-aou",
+            "--",
+            "archive.7z",
+        ]
+        .map(str::to_string);
+        let err = validate_run_7z_args(&args).expect_err("ancestor wildcard");
+        assert_eq!(err, WILDCARD_OUTPUT_MESSAGE);
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_wildcard_in_extract_output_basename() {
+        let args = ["x", "-oC:\\Users\\me\\out*", "-aou", "--", "archive.7z"].map(str::to_string);
+        let err = validate_run_7z_args(&args).expect_err("basename wildcard");
+        assert_eq!(err, WILDCARD_OUTPUT_MESSAGE);
+    }
+
+    #[test]
+    fn validate_run_7z_args_accepts_extract_output_without_wildcard() {
+        let args = [
+            "x",
+            "-o/tmp/x/ancestor/.zinnia-extract-abc",
+            "-aou",
+            "--",
+            "archive.7z",
+        ]
+        .map(str::to_string);
+        validate_run_7z_args(&args).expect("plain extract output is accepted");
+    }
+
+    #[test]
+    fn validate_run_7z_args_keeps_wildcard_in_archive_output_path() {
+        let args = ["a", "-t7z", "/tmp/an*cestor/out.7z", "--", "input.txt"].map(str::to_string);
+        validate_run_7z_args(&args).expect("archive output paths are not -o arguments");
+    }
+
+    #[test]
+    fn validate_run_7z_args_redacts_password_switch_in_benchmark_error() {
+        let args = ["b", "-psecret-token-123"].map(str::to_string);
+        let err = validate_run_7z_args(&args).expect_err("benchmark rejects password switch");
+        assert!(!err.contains("secret-token-123"), "{err}");
+        assert!(err.contains("not permitted"), "{err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_redacts_uppercase_password_switch() {
+        let args = ["b", "-PSECRET-UPPER-456"].map(str::to_string);
+        let err = validate_run_7z_args(&args).expect_err("benchmark rejects password switch");
+        assert!(!err.contains("SECRET-UPPER-456"), "{err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_redacts_password_token_in_other_error_positions() {
+        let command_position = ["-pSECRET-COMMAND-789", "a"].map(str::to_string);
+        let err = validate_run_7z_args(&command_position).expect_err("command position");
+        assert!(!err.contains("SECRET-COMMAND-789"), "{err}");
+
+        let path_position = [
+            "x",
+            "-o/tmp/out",
+            "-aou",
+            "--",
+            "-pSECRET-PATH-012/../escape.7z",
+        ]
+        .map(str::to_string);
+        let err = validate_run_7z_args(&path_position).expect_err("path with parent segment");
+        assert!(!err.contains("SECRET-PATH-012"), "{err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_keeps_non_password_switch_in_errors() {
+        let args = ["b", "-foo-visible"].map(str::to_string);
+        let err = validate_run_7z_args(&args).expect_err("unknown switch");
+        assert!(err.contains("-foo-visible"), "{err}");
     }
 }

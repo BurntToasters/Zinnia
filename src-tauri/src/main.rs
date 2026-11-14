@@ -22,7 +22,7 @@ mod validation;
 mod window_fx;
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -61,6 +61,25 @@ struct SlotFacts {
     user_run: bool,
     /// Anything that closing or quitting must wait out.
     busy: bool,
+}
+
+static FORCE_EXIT: AtomicBool = AtomicBool::new(false);
+
+fn exit_forced() -> bool {
+    FORCE_EXIT.load(Ordering::SeqCst)
+}
+
+fn exit_forced_app(app: &tauri::AppHandle) {
+    FORCE_EXIT.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+fn should_prevent_exit(facts: &SlotFacts, forced: bool) -> bool {
+    !forced && facts.busy
+}
+
+fn should_defer_close(facts: &SlotFacts, label: &str, forced: bool) -> bool {
+    !forced && facts.owner.as_deref() == Some(label) && facts.busy
 }
 
 fn read_slot_facts(app: &tauri::AppHandle) -> SlotFacts {
@@ -103,8 +122,7 @@ fn defer_close_while_operation_finishes(
     api: &tauri::CloseRequestApi,
 ) -> bool {
     let facts = read_slot_facts(app);
-    let owns_busy_operation = facts.owner.as_deref() == Some(label) && facts.busy;
-    if !owns_busy_operation {
+    if !should_defer_close(&facts, label, exit_forced()) {
         if launch::is_extract_window_label(label) {
             launch::clear_extract_window_bindings(app, label);
         }
@@ -182,7 +200,7 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
                         }
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                    app.exit(0);
+                    exit_forced_app(&app);
                     return;
                 }
             }
@@ -201,7 +219,7 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
         } else {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
-        app.exit(0);
+        exit_forced_app(&app);
     });
 }
 
@@ -210,18 +228,17 @@ fn defer_exit_while_operation_finishes(
     api: &tauri::ExitRequestApi,
 ) -> bool {
     let facts = read_slot_facts(app);
+    if !should_prevent_exit(&facts, exit_forced()) {
+        return false;
+    }
+    api.prevent_exit();
     // An update reservation has no child to cancel. Do not mistake a
     // user/system Quit during installation for the later updater relaunch.
     // The frontend releases this reservation immediately before calling
     // relaunch; until then, keep the process alive.
     if facts.update_reserved {
-        api.prevent_exit();
         return true;
     }
-    if !facts.busy {
-        return false;
-    }
-    api.prevent_exit();
     if facts.user_run {
         if let Some(owner) = facts.owner.as_deref() {
             if ask_owner_to_confirm(app, owner, "quit") {
@@ -463,6 +480,7 @@ fn main() {
             launch::get_extract_paths,
             launch::inspect_extract_destination,
             launch::close_extract_window,
+            launch::choose_extract_destination,
             launch::open_debug_console_window,
             launch::close_debug_console_window,
             launch::relay_debug_console_line,
@@ -500,7 +518,10 @@ fn main() {
                 return;
             }
             // Stay resident after quick-extract so the next file association is warm.
-            if should_keep_extract_warm(app_handle) && enter_extract_warm_idle(app_handle) {
+            if !exit_forced()
+                && should_keep_extract_warm(app_handle)
+                && enter_extract_warm_idle(app_handle)
+            {
                 api.prevent_exit();
             }
         }
@@ -558,7 +579,7 @@ fn main() {
             if launch::is_extract_window_label(&label) {
                 launch::clear_extract_window_bindings(app_handle, &label);
             }
-            if should_keep_extract_warm(app_handle) {
+            if !exit_forced() && should_keep_extract_warm(app_handle) {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();
                 }
@@ -574,7 +595,10 @@ fn main() {
             if defer_exit_while_operation_finishes(app_handle, api) {
                 return;
             }
-            if should_keep_extract_warm(app_handle) && enter_extract_warm_idle(app_handle) {
+            if !exit_forced()
+                && should_keep_extract_warm(app_handle)
+                && enter_extract_warm_idle(app_handle)
+            {
                 api.prevent_exit();
                 return;
             }
@@ -602,7 +626,7 @@ fn main() {
             if launch::is_extract_window_label(label) {
                 launch::clear_extract_window_bindings(app_handle, label);
             }
-            if should_keep_extract_warm(app_handle) {
+            if !exit_forced() && should_keep_extract_warm(app_handle) {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();
                 }
@@ -610,4 +634,85 @@ fn main() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod exit_gate_tests {
+    use super::{should_defer_close, should_prevent_exit, SlotFacts};
+
+    fn facts(owner: Option<&str>, update_reserved: bool, user_run: bool, busy: bool) -> SlotFacts {
+        SlotFacts {
+            owner: owner.map(str::to_string),
+            update_reserved,
+            user_run,
+            busy,
+        }
+    }
+
+    fn idle() -> SlotFacts {
+        facts(None, false, false, false)
+    }
+
+    fn running_child() -> SlotFacts {
+        facts(Some("main"), false, true, true)
+    }
+
+    fn update_held() -> SlotFacts {
+        facts(None, true, false, true)
+    }
+
+    fn cancelling_without_owner() -> SlotFacts {
+        facts(None, false, false, true)
+    }
+
+    #[test]
+    fn idle_slot_lets_exit_proceed() {
+        assert!(!should_prevent_exit(&idle(), false));
+    }
+
+    #[test]
+    fn running_child_defers_exit_until_forced() {
+        assert!(should_prevent_exit(&running_child(), false));
+    }
+
+    #[test]
+    fn update_reservation_defers_exit_when_not_forced() {
+        assert!(should_prevent_exit(&update_held(), false));
+    }
+
+    #[test]
+    fn busy_without_owner_defers_exit_when_not_forced() {
+        assert!(should_prevent_exit(&cancelling_without_owner(), false));
+    }
+
+    #[test]
+    fn forced_exit_proceeds_with_running_child() {
+        assert!(!should_prevent_exit(&running_child(), true));
+    }
+
+    #[test]
+    fn forced_exit_proceeds_with_cancelling_slot_and_no_owner() {
+        assert!(!should_prevent_exit(&cancelling_without_owner(), true));
+    }
+
+    #[test]
+    fn forced_exit_proceeds_with_update_reservation() {
+        assert!(!should_prevent_exit(&update_held(), true));
+    }
+
+    #[test]
+    fn owner_busy_close_defers_when_not_forced() {
+        assert!(should_defer_close(&running_child(), "main", false));
+    }
+
+    #[test]
+    fn forced_close_of_busy_owner_is_not_deferred() {
+        assert!(!should_defer_close(&running_child(), "main", true));
+    }
+
+    #[test]
+    fn close_of_a_window_that_owns_nothing_is_never_deferred() {
+        assert!(!should_defer_close(&running_child(), "extract-0", false));
+        assert!(!should_defer_close(&idle(), "main", false));
+    }
 }

@@ -136,11 +136,18 @@ Failure modes:
 - B-03 slow-media verification on a real USB stick or network share is a
   `[target]` check; it cannot run on this host.
 - C-09 real exit-1 extraction capture on Windows or Linux is a `[target]` check.
-- New finding, not fixed: app extraction time grows faster than linearly with
-  entry count. Measured on macOS arm64 (stored ZIP, 8-byte files): 30,000
-  entries took 79 s in the app; 110,000 entries staged all files within about a
-  minute but did not publish within 20 minutes. Raw 7-Zip extracts 110,000 in
-  about 7 s. A Rust-side trace put collect at about 10 s and finalize at about
-  6 s, so the remaining time is not yet located. The E2E case uses 30,000
-  entries until this is diagnosed, so it does not prove extraction above the
-  old 32 MiB preflight cap end to end.
+- Result of worker 2A (rust-merge-batching), see
+  `beta2-rust-merge-batching.failure-modes.md`. The original report (macOS arm64,
+  stored ZIP, 8-byte files): 30,000 entries took 79 s in the app; 110,000
+  entries staged all files within about a minute but did not publish within 20
+  minutes; raw 7-Zip extracts 110,000 in about 7 s. On Windows NTFS the
+  superlinear growth was not reproduced: per-entry cost is flat between 5,000
+  and 20,000 entries. The cost is linear and large. Each entry paid an identity
+  log fsync and a production journal rewrite (two atomic file writes with fsync
+  per entry), and two 32 MiB sidecar caps refused the 110,000-entry plan and log
+  outright. Fixed: identities are journaled in batches of 256, the caps are
+  512 MiB (move plan) and 1 GiB (identity log), and the same-host full merge
+  dropped from 6.3 to 1.4 ms per entry (back-to-back, simulated recorder). The
+  E2E case now extracts 110,000 entries. A macOS run, where the superlinear
+  observation was made, is a `[target]` check, and the GUI E2E run is the
+  manager's check.

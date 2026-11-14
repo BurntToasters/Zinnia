@@ -1,5 +1,5 @@
 export const MAX_LOG_LINES = 1000;
-export const SAFE_URL_PATTERN = /^https?:\/\//i;
+const SAFE_URL_PATTERN = /^https?:\/\//i;
 
 export const ARCHIVE_EXTENSIONS = new Set([
   ".7z",
@@ -57,11 +57,9 @@ const isolationState = new Map<
   { count: number; wasInert: boolean }
 >();
 
-/** Window chrome that stays clickable above modal sheets (gear, Support, close). */
+/** Surfaces that stay clickable above modal sheets. The titlebar and header go inert with the modal. */
 function keepInteractiveDuringModal(element: HTMLElement): boolean {
   return (
-    element.id === "titlebar" ||
-    element.classList.contains("header") ||
     element.id === "extract-app" ||
     element.id === "toast-region" ||
     element.id === "startup-recovery-banner"
@@ -176,6 +174,36 @@ export function releaseFocusTrap(container: HTMLElement): void {
   restoreModalBackground(container);
 }
 
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!navigator.clipboard?.writeText) return copyWithTextarea(text);
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return copyWithTextarea(text);
+  }
+}
+
+function copyWithTextarea(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  area.style.pointerEvents = "none";
+  document.body.appendChild(area);
+  try {
+    area.select();
+    return (
+      typeof document.execCommand === "function" && document.execCommand("copy")
+    );
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+  }
+}
+
 export function parseThreads(raw: string, fallback: number): number {
   const clampedFallback = Math.max(1, Math.min(128, fallback));
   const n = parseInt(raw, 10);
@@ -194,6 +222,14 @@ export function formatSize(bytes: number): string {
   );
   const size = whole / Math.pow(1024, i);
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+export function pluralize(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 export function splitArgs(raw: string) {

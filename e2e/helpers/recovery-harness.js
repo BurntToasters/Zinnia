@@ -134,12 +134,43 @@ export function readJsonIfPresent(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function writeEntriesArchive(root, archive, count, payloadText) {
+  if (!Number.isInteger(count) || count < 2) {
+    throw new Error(`entries must be an integer of at least 2, got ${count}`);
+  }
+  const staging = path.join(root, "entries");
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: true });
+  try {
+    fs.writeFileSync(path.join(staging, "hello.txt"), payloadText);
+    for (let index = 1; index < count; index += 1) {
+      fs.writeFileSync(
+        path.join(staging, `entry-${String(index).padStart(4, "0")}.txt`),
+        `entry ${index}\n`,
+      );
+    }
+    const names = fs.readdirSync(staging).sort();
+    run7z(
+      requireHostSidecar(),
+      ["a", "-t7z", "-mx=0", archive, "--", ...names],
+      { cwd: staging },
+    );
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 /**
  * Lay out one crash case under the profile work dir. Returns the caseInfo the
  * crash and recovery specs receive through ZINNIA_E2E_CASE. The pre-state
  * manifest is written beside the case root, outside it, so it is not scanned.
  */
 export function prepareCrashCase(profile, testCase) {
+  if (testCase.entries !== undefined && testCase.operation !== "extract") {
+    throw new Error(
+      `crash case ${testCase.id}: entries applies only to extract`,
+    );
+  }
   const root = path.join(profile.work, "cases", testCase.id);
   fs.mkdirSync(root, { recursive: true });
   const info = {
@@ -156,8 +187,18 @@ export function prepareCrashCase(profile, testCase) {
   if (testCase.operation === "extract") {
     const srcDir = path.join(root, "src");
     fs.mkdirSync(srcDir, { recursive: true });
-    info.archive = path.join(srcDir, "hello.7z");
-    fs.copyFileSync(profile.copies["hello.7z"], info.archive);
+    if (testCase.entries === undefined) {
+      info.archive = path.join(srcDir, "hello.7z");
+      fs.copyFileSync(profile.copies["hello.7z"], info.archive);
+    } else {
+      info.archive = path.join(srcDir, "entries.7z");
+      writeEntriesArchive(
+        root,
+        info.archive,
+        testCase.entries,
+        profile.manifest.payloadText,
+      );
+    }
     info.destination = path.join(root, "out");
     info.destinationMode = testCase.destination;
     if (testCase.destination === "preexisting") {

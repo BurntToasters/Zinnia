@@ -5,7 +5,7 @@ import {
   trapFocus,
 } from "./utils";
 
-export interface PromptOptions {
+interface PromptOptions {
   title: string;
   label: string;
   password?: boolean;
@@ -18,7 +18,7 @@ export interface PromptOptions {
 export type PasswordPromptOutcome =
   { kind: "submit"; value: string } | { kind: "skip" } | { kind: "cancel" };
 
-export interface PasswordPromptOptions {
+interface PasswordPromptOptions {
   title: string;
   label: string;
   confirmLabel?: string;
@@ -261,7 +261,7 @@ export function promptPassword(
   );
 }
 
-export interface ConfirmChoiceOptions {
+interface ConfirmChoiceOptions {
   title: string;
   message: string;
   confirmLabel?: string;
@@ -297,6 +297,7 @@ export function confirmChoice(options: ConfirmChoiceOptions): Promise<boolean> {
 
   if (titleEl) titleEl.textContent = options.title;
   if (labelEl) labelEl.textContent = options.message;
+  if (modal && labelEl?.id) modal.setAttribute("aria-describedby", labelEl.id);
   field.hidden = true;
   confirmBtn.textContent = options.confirmLabel ?? "OK";
   cancelBtn.textContent = options.cancelLabel ?? "Cancel";
@@ -310,7 +311,10 @@ export function confirmChoice(options: ConfirmChoiceOptions): Promise<boolean> {
       cancelX?.removeEventListener("click", onCancel);
       document.removeEventListener("keydown", onKey);
       overlay.removeEventListener("click", onOverlayClick);
-      if (modal) releaseFocusTrap(modal);
+      if (modal) {
+        releaseFocusTrap(modal);
+        modal.removeAttribute("aria-describedby");
+      }
       field.hidden = previousFieldHidden;
       confirmBtn.textContent = previousConfirm;
       cancelBtn.textContent = previousCancel;

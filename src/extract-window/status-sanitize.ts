@@ -1,3 +1,14 @@
+const STATUS_NAME_MAX_CHARACTERS = 200;
+const FILENAME_START = /^[\p{L}\p{N}._~(\[{]/u;
+
+function userPerceivedCharacters(text: string): string[] {
+  if (typeof Intl.Segmenter !== "function") return Array.from(text);
+  return Array.from(
+    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text),
+    (part) => part.segment,
+  );
+}
+
 /** Strip noisy progress junk so status never flashes missing-glyph boxes. */
 export function sanitizeStatusFileName(name: string): string {
   const cleaned = name
@@ -11,9 +22,10 @@ export function sanitizeStatusFileName(name: string): string {
   // Start at the first filename-like character. Include `(` / `[` / `{` so
   // names like `(report).txt` keep their parentheses, while still dropping
   // leading `***` / similar symbol runs from 7-Zip progress lines.
-  const match = withoutProgressJunk.match(/[\p{L}\p{N}._~(\[{]/u);
-  if (match?.index === undefined) return "";
-  return [...withoutProgressJunk]
-    .slice(match.index, match.index + 200)
-    .join("");
+  const characters = userPerceivedCharacters(withoutProgressJunk);
+  const start = characters.findIndex((character) =>
+    FILENAME_START.test(character),
+  );
+  if (start < 0) return "";
+  return characters.slice(start, start + STATUS_NAME_MAX_CHARACTERS).join("");
 }

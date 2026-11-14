@@ -30,6 +30,7 @@ function mountExtractDom(): void {
       <div class="extract-footer">
         <button id="cancel-btn">Cancel</button>
         <button id="open-destination-btn" hidden>Open destination</button>
+        <button id="choose-folder-btn" hidden>Choose another folder</button>
         <button id="retry-btn" hidden>Retry</button>
         <button id="close-btn" hidden>Close</button>
       </div>
@@ -176,8 +177,8 @@ async function setupAndRun(
         const status =
           document.getElementById("extract-status")?.textContent ?? "";
         if (
-          status === "Extracting..." ||
-          status === "Starting extraction..." ||
+          status === "Extracting…" ||
+          status === "Starting extraction…" ||
           status === "Still working…"
         ) {
           throw new Error(`extract still in progress: ${status}`);

@@ -26,13 +26,18 @@ import {
 } from "../webview-context-menu";
 import {
   $,
+  announceExtract,
   setButtons,
   stopProgressAt,
   startIndeterminateProgress,
   setDeterminateProgress,
   parentDir,
 } from "./dom";
-import { closeWindowSafely, syncExtractWindowFx } from "./fx";
+import {
+  closeWindowSafely,
+  followSystemThemeChanges,
+  syncExtractWindowFx,
+} from "./fx";
 import {
   runWithPasswordRetry,
   EXTRACT_PASSWORD_PROMPT_CANCELLED,
@@ -86,6 +91,15 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   return copied;
 }
 
+const PERMISSION_FAILURE_PATTERN =
+  /permission denied|access is denied|read-only|read only/i;
+const PERMISSION_FAILURE_TITLE =
+  "Permission denied: this folder is read-only or you cannot write to it.";
+
+function isPermissionFailure(detail: string): boolean {
+  return PERMISSION_FAILURE_PATTERN.test(detail);
+}
+
 function selectTextForManualCopy(element: HTMLElement): void {
   const range = document.createRange();
   range.selectNodeContents(element);
@@ -121,6 +135,7 @@ export async function runExtractWindow(): Promise<void> {
   const cancelBtn = $("cancel-btn") as HTMLButtonElement;
   const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
   const retryBtn = $("retry-btn") as HTMLButtonElement;
+  const chooseFolderBtn = $("choose-folder-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;
   let cancelRequested = false;
   const extractAbort = new AbortController();
@@ -129,6 +144,7 @@ export async function runExtractWindow(): Promise<void> {
   let extractionRunning = false;
   let archivePath = "";
   let destination = "";
+  let announcedStep = 0;
 
   // Arms the same abort the Cancel button uses. Runs only after the user
   // confirms that a running extraction may be stopped.
@@ -138,7 +154,7 @@ export async function runExtractWindow(): Promise<void> {
     cancelBtn.disabled = true;
     openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
-    $("extract-status").textContent = "Cancelling...";
+    $("extract-status").textContent = "Cancelling…";
   };
 
   if (closeTitlebarBtn) {
@@ -167,6 +183,7 @@ export async function runExtractWindow(): Promise<void> {
   const debugMode = settings?.debug === true;
   setNativeWebviewContextMenuAllowed(debugMode);
   void syncExtractWindowFx(settings);
+  followSystemThemeChanges(settings);
 
   const { beginAutoClose } = createAutoCloseController(
     closeBtn,
@@ -182,6 +199,9 @@ export async function runExtractWindow(): Promise<void> {
   ) => {
     operationFinished = true;
     $("extract-status").textContent = status;
+    announceExtract(
+      asError ? "Failed" : asCancelled ? "Cancelled" : "Finished",
+    );
     const h1 = document.querySelector<HTMLHeadingElement>("h1");
     if (h1) {
       h1.textContent = asError
@@ -233,6 +253,7 @@ export async function runExtractWindow(): Promise<void> {
 
   const hideRecoveryActions = () => {
     retryBtn.hidden = true;
+    chooseFolderBtn.hidden = true;
   };
 
   const showError = (
@@ -282,12 +303,33 @@ export async function runExtractWindow(): Promise<void> {
     }
     detailEl.textContent = text;
     if (copyErrorBtn) copyErrorBtn.hidden = false;
+    const permission = isPermissionFailure(detail);
+    if (permission) {
+      const titleEl = $("extract-error").querySelector<HTMLElement>(
+        ".extract-error-title",
+      );
+      if (titleEl) titleEl.textContent = PERMISSION_FAILURE_TITLE;
+    }
     finish("Failed", 100, true, false);
     if (offerRecovery) {
       retryBtn.disabled = false;
       retryBtn.hidden = false;
-      retryBtn.focus();
+      chooseFolderBtn.disabled = false;
+      chooseFolderBtn.hidden = false;
+      (permission ? chooseFolderBtn : retryBtn).focus();
     }
+  };
+
+  const showChooseError = (detail: string) => {
+    $("extract-error").hidden = false;
+    const titleEl = $("extract-error").querySelector<HTMLElement>(
+      ".extract-error-title",
+    );
+    if (titleEl) titleEl.textContent = "Could not choose another folder";
+    $("error-detail").textContent = userFacingBackendError(detail);
+    retryBtn.hidden = false;
+    chooseFolderBtn.hidden = false;
+    chooseFolderBtn.focus();
   };
 
   cancelBtn.addEventListener("click", async () => {
@@ -298,7 +340,7 @@ export async function runExtractWindow(): Promise<void> {
     cancelBtn.disabled = true;
     openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
-    $("extract-status").textContent = "Cancelling...";
+    $("extract-status").textContent = "Cancelling…";
     try {
       await invoke<boolean>("cancel_7z");
     } catch (err) {
@@ -346,6 +388,13 @@ export async function runExtractWindow(): Promise<void> {
     }
   });
 
+  const announceProgressStep = (percent: number) => {
+    const step = Math.min(100, Math.floor(percent / 25) * 25);
+    if (step <= announcedStep) return;
+    announcedStep = step;
+    announceExtract(`${step}% done`);
+  };
+
   const runExtractionSteps = async (): Promise<void> => {
     try {
       const proceed = await confirmExtractDestination(destination);
@@ -353,7 +402,7 @@ export async function runExtractWindow(): Promise<void> {
         finish("Cancelled", 0, false, false, true);
         return;
       }
-      $("extract-status").textContent = "Starting extraction...";
+      $("extract-status").textContent = "Starting extraction…";
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       showError(userFacingBackendError(raw), { rawDetail: raw });
@@ -420,6 +469,7 @@ export async function runExtractWindow(): Promise<void> {
           sawStructuredPercent = true;
           cancelBtn.disabled = true;
           setDeterminateProgress(100);
+          announceProgressStep(100);
           $("extract-status").textContent = "Finalizing…";
           return;
         }
@@ -437,13 +487,14 @@ export async function runExtractWindow(): Promise<void> {
           const progressBar = document.getElementById("extract-progress");
           if (progressBar) progressBar.dataset.sawStructuredPercent = "true";
           setDeterminateProgress(Math.min(99, update.percent));
+          announceProgressStep(Math.min(99, update.percent));
           eta = formatSharedEta(Date.now() - startedAt, update.percent);
         }
         if (update?.currentFile) {
           const clean = sanitizeStatusFileName(basename(update.currentFile));
           if (clean) lastFile = clean;
         }
-        const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
+        const label = lastFile ? `Extracting ${lastFile}…` : "Extracting…";
         $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
       }),
     );
@@ -457,7 +508,7 @@ export async function runExtractWindow(): Promise<void> {
             const clean = sanitizeStatusFileName(basename(match[1]));
             if (!clean) continue;
             lastFile = clean;
-            $("extract-status").textContent = `Extracting ${clean}...`;
+            $("extract-status").textContent = `Extracting ${clean}…`;
           }
         }
       }),
@@ -488,7 +539,7 @@ export async function runExtractWindow(): Promise<void> {
       return;
     }
 
-    $("extract-status").textContent = "Extracting...";
+    $("extract-status").textContent = "Extracting…";
 
     const args = [
       "x",
@@ -553,6 +604,7 @@ export async function runExtractWindow(): Promise<void> {
   const runExtraction = async (): Promise<void> => {
     extractionRunning = true;
     operationFinished = false;
+    announcedStep = 0;
     hideRecoveryActions();
     $("extract-error").hidden = true;
     const errorTitle = $("extract-error").querySelector<HTMLElement>(
@@ -561,7 +613,8 @@ export async function runExtractWindow(): Promise<void> {
     if (errorTitle) errorTitle.textContent = "Extraction failed";
     cancelBtn.disabled = false;
     setButtons(true, false, false);
-    $("extract-status").textContent = "Starting extraction...";
+    $("extract-status").textContent = "Starting extraction…";
+    announceExtract("Started");
     try {
       await runExtractionSteps();
     } finally {
@@ -572,6 +625,25 @@ export async function runExtractWindow(): Promise<void> {
   retryBtn.addEventListener("click", () => {
     if (extractionRunning) return;
     void runExtraction();
+  });
+
+  chooseFolderBtn.addEventListener("click", async () => {
+    if (extractionRunning) return;
+    chooseFolderBtn.disabled = true;
+    retryBtn.disabled = true;
+    try {
+      const chosen = await invoke<string | null>("choose_extract_destination");
+      if (!chosen) return;
+      destination = chosen;
+      $("extract-dest").textContent = chosen;
+      $("extract-dest").title = chosen;
+      await runExtraction();
+    } catch (err) {
+      showChooseError(err instanceof Error ? err.message : String(err));
+    } finally {
+      chooseFolderBtn.disabled = false;
+      retryBtn.disabled = false;
+    }
   });
 
   setButtons(true, false, false);
@@ -597,7 +669,7 @@ export async function runExtractWindow(): Promise<void> {
     $("archive-name").title = archivePath;
     $("extract-dest").textContent = destination;
     $("extract-dest").title = destination;
-    $("extract-status").textContent = "Starting extraction...";
+    $("extract-status").textContent = "Starting extraction…";
     $("extract-error").hidden = true;
     try {
       await claimPaths;
@@ -607,7 +679,17 @@ export async function runExtractWindow(): Promise<void> {
       );
     }
   } else {
-    const paths = await claimPaths;
+    let paths: string[];
+    try {
+      paths = await claimPaths;
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      showError(
+        `Zinnia could not read the extraction request: ${userFacingBackendError(raw)}`,
+        { rawDetail: raw },
+      );
+      return;
+    }
     archivePath = paths[0] ?? "";
     if (!archivePath) {
       $("extract-status").textContent = "No archive specified.";
@@ -622,7 +704,7 @@ export async function runExtractWindow(): Promise<void> {
     $("archive-name").title = archivePath;
     $("extract-dest").textContent = destination;
     $("extract-dest").title = destination;
-    $("extract-status").textContent = "Starting extraction...";
+    $("extract-status").textContent = "Starting extraction…";
     $("extract-error").hidden = true;
   }
 

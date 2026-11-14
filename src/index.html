@@ -43,6 +43,12 @@
         Dismiss
       </button>
     </div>
+    <span
+      class="sr-only"
+      id="progress-announcer"
+      role="status"
+      aria-live="polite"
+    ></span>
     <div
       id="app"
       class="app"
@@ -141,6 +147,14 @@
             ></div>
           </div>
           <button
+            type="button"
+            class="btn btn--ghost btn--sm update-ready-indicator"
+            id="basic-update-indicator"
+            hidden
+          >
+            Update ready
+          </button>
+          <button
             class="btn btn--ghost btn--sm"
             id="toggle-density"
             aria-pressed="false"
@@ -236,7 +250,7 @@
                 tabindex="-1"
               >
                 <i data-lucide="monitor" class="lucide-icon"></i>
-                <span>OS Integration</span>
+                <span>OS integration</span>
               </button>
               <button
                 class="settings-tab"
@@ -672,11 +686,11 @@
                       <label for="s-format">Format</label>
                       <select id="s-format">
                         <option value="7z">7z</option>
-                        <option value="zip">zip</option>
-                        <option value="tar">tar</option>
-                        <option value="gzip">gzip</option>
-                        <option value="bzip2">bzip2</option>
-                        <option value="xz">xz</option>
+                        <option value="zip">ZIP</option>
+                        <option value="tar">TAR</option>
+                        <option value="gzip">GZIP</option>
+                        <option value="bzip2">BZIP2</option>
+                        <option value="xz">XZ</option>
                       </select>
                     </div>
                     <div class="field">
@@ -697,10 +711,7 @@
                       <select id="s-method">
                         <option value="lzma2">LZMA2</option>
                         <option value="lzma">LZMA</option>
-                        <option value="ppmd">PPMd</option>
-                        <option value="bzip2">BZip2</option>
                         <option value="deflate">Deflate</option>
-                        <option value="zstd">Zstandard</option>
                       </select>
                     </div>
                     <div class="field">
@@ -799,7 +810,7 @@
                     <div class="os-status-card">
                       <span class="settings-label">Archive file types</span>
                       <span
-                        class="status-pill status-pill--warn"
+                        class="status-pill status-pill--unknown"
                         id="os-file-assoc-status"
                         >Checking…</span
                       >
@@ -807,7 +818,7 @@
                     <div class="os-status-card">
                       <span class="settings-label">Open/extract actions</span>
                       <span
-                        class="status-pill status-pill--warn"
+                        class="status-pill status-pill--unknown"
                         id="os-context-status"
                         >Checking…</span
                       >
@@ -823,7 +834,7 @@
                     </div>
                     <div class="os-finder-services-actions">
                       <span
-                        class="status-pill status-pill--warn"
+                        class="status-pill status-pill--unknown"
                         id="os-finder-sync-status"
                         >Checking…</span
                       >
@@ -837,7 +848,7 @@
                   </div>
                   <div class="setting-item" id="os-finder-services-row" hidden>
                     <div class="setting-info">
-                      <span class="setting-title">Finder Services</span>
+                      <span class="setting-title">Finder services</span>
                       <span class="setting-desc" id="os-finder-services-help"
                         >Extract / Compress with Zinnia under Keyboard Shortcuts
                         → Services (not Login Items &amp; Extensions).</span
@@ -845,7 +856,7 @@
                     </div>
                     <div class="os-finder-services-actions">
                       <span
-                        class="status-pill status-pill--warn"
+                        class="status-pill status-pill--unknown"
                         id="os-finder-services-status"
                         >Checking…</span
                       >
@@ -867,7 +878,7 @@
                     </div>
                     <div class="os-finder-services-actions">
                       <span
-                        class="status-pill status-pill--warn"
+                        class="status-pill status-pill--unknown"
                         id="os-win11-menu-status"
                         >Checking…</span
                       >
@@ -884,7 +895,7 @@
                       class="btn btn--ghost btn--sm"
                       id="reset-os-integration-defaults"
                     >
-                      Reset Preferred Archiver to System Archiver
+                      Reset preferred archiver to system archiver
                     </button>
                     <button
                       class="btn btn--ghost btn--sm"
@@ -896,11 +907,10 @@
                   <div
                     class="os-default-list"
                     id="os-archive-default-list"
-                    aria-live="polite"
                   ></div>
                   <div class="settings-note">
                     Zinnia only changes default archive apps when you choose it
-                    here. Supported formats: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2,
+                    here. Supported formats: ZIP, 7z, TAR, GZIP/TGZ, BZIP2/TBZ2,
                     XZ/TXZ, and RAR. Compound TAR streams open and extract in
                     one operation on every supported platform.
                   </div>
@@ -968,7 +978,7 @@
                     class="btn btn--sm about-licenses-btn"
                     id="about-show-licenses"
                   >
-                    View Open-Source Licenses
+                    View open-source licenses
                   </button>
                 </section>
 
@@ -1015,7 +1025,7 @@
           aria-labelledby="licenses-title"
         >
           <div class="modal__header">
-            <h2 id="licenses-title">Open-Source Licenses</h2>
+            <h2 id="licenses-title">Open-source licenses</h2>
             <button
               class="btn btn--ghost btn--sm"
               id="close-licenses"
@@ -1025,9 +1035,7 @@
             </button>
           </div>
           <div class="modal__body">
-            <div id="licenses-list" class="licenses-list" aria-live="polite">
-              Loading…
-            </div>
+            <div id="licenses-list" class="licenses-list">Loading…</div>
           </div>
         </div>
       </div>
@@ -1055,7 +1063,7 @@
               <input
                 type="text"
                 id="selective-search"
-                placeholder="Filter by path..."
+                placeholder="Filter by path…"
                 spellcheck="false"
                 autocorrect="off"
                 autocapitalize="off"
@@ -1093,7 +1101,7 @@
                   autocomplete="off"
                 />
                 <button class="btn btn--sm" id="selective-browse-dest">
-                  Browse
+                  Choose…
                 </button>
               </div>
             </div>
@@ -1137,15 +1145,15 @@
               <label for="convert-format">Convert to</label>
               <select id="convert-format">
                 <option value="7z" selected>7z</option>
-                <option value="zip">zip</option>
-                <option value="tar">tar</option>
-                <option value="gzip">gzip</option>
-                <option value="bzip2">bzip2</option>
-                <option value="xz">xz</option>
+                <option value="zip">ZIP</option>
+                <option value="tar">TAR</option>
+                <option value="gzip">GZIP</option>
+                <option value="bzip2">BZIP2</option>
+                <option value="xz">XZ</option>
               </select>
             </div>
             <div class="field" id="convert-password-field">
-              <label for="convert-password">Password</label>
+              <label for="convert-password">Archive password</label>
               <div class="input-row">
                 <input
                   type="password"
@@ -1235,7 +1243,7 @@
           aria-labelledby="command-preview-title"
         >
           <div class="modal__header">
-            <h2 id="command-preview-title">Command Preview</h2>
+            <h2 id="command-preview-title">Command preview</h2>
             <button
               class="btn btn--ghost btn--sm"
               id="close-command-preview"
@@ -1245,11 +1253,7 @@
             </button>
           </div>
           <div class="modal__body">
-            <pre
-              id="command-preview-text"
-              class="command-preview-code"
-              aria-live="polite"
-            ></pre>
+            <pre id="command-preview-text" class="command-preview-code"></pre>
           </div>
           <div class="modal__footer">
             <button class="btn btn--sm" id="copy-command-preview">Copy</button>
@@ -1322,9 +1326,11 @@
             </label>
           </div>
           <div class="modal__footer">
-            <button class="btn btn--sm" id="input-modal-confirm">OK</button>
             <button class="btn btn--ghost btn--sm" id="input-modal-cancel">
               Cancel
+            </button>
+            <button class="btn btn--primary btn--sm" id="input-modal-confirm">
+              OK
             </button>
           </div>
         </div>
@@ -1506,14 +1512,14 @@
             </p>
             <div class="setup-wizard-os-box">
               <span
-                >Supported types: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2, XZ/TXZ,
+                >Supported types: ZIP, 7z, TAR, GZIP/TGZ, BZIP2/TBZ2, XZ/TXZ,
                 and RAR</span
               >
             </div>
             <div class="setup-wizard-step__actions">
               <button class="btn btn--ghost" id="setup-os-back">Back</button>
               <button class="btn btn--ghost" id="setup-os-open">
-                Make Zinnia Default
+                Make Zinnia default
               </button>
               <button class="btn btn--primary" id="setup-os-next">
                 Finish setup
@@ -1673,6 +1679,32 @@
                   </button>
                 </div>
               </div>
+              <div class="basic-destination" id="basic-save-to-row">
+                <span class="basic-destination__label" id="basic-save-to-label"
+                  >Save to</span
+                >
+                <output
+                  class="basic-destination__path"
+                  id="basic-save-to-path"
+                  aria-labelledby="basic-save-to-label"
+                  ><span
+                    class="basic-destination__folder"
+                    id="basic-save-to-folder"
+                  ></span
+                  ><span
+                    class="basic-destination__name"
+                    id="basic-save-to-name"
+                  ></span
+                ></output>
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--secondary basic-destination__change"
+                  id="basic-change-save-location"
+                  type="button"
+                  aria-label="Change save location"
+                >
+                  Change
+                </button>
+              </div>
               <hr class="basic-divider" id="basic-name-location-divider" />
               <div class="basic-section" id="basic-name-location-section">
                 <div class="basic-section-head">
@@ -1711,7 +1743,7 @@
                       class="basic-btn basic-btn--sm basic-btn--secondary"
                       id="basic-choose-output"
                     >
-                      Choose location
+                      Choose…
                     </button>
                   </div>
                 </div>
@@ -1766,16 +1798,16 @@
                     >
                     <select id="basic-format">
                       <option value="7z">7z</option>
-                      <option value="zip">zip</option>
-                      <option value="tar">tar</option>
-                      <option value="gzip">gzip</option>
-                      <option value="bzip2">bzip2</option>
-                      <option value="xz">xz</option>
+                      <option value="zip">ZIP</option>
+                      <option value="tar">TAR</option>
+                      <option value="gzip">GZIP</option>
+                      <option value="bzip2">BZIP2</option>
+                      <option value="xz">XZ</option>
                     </select>
                   </div>
                   <div class="basic-field">
                     <label class="basic-field__label" for="basic-password"
-                      >Password</label
+                      >Archive password</label
                     >
                     <div class="basic-input-row">
                       <input
@@ -1804,7 +1836,7 @@
                   </label>
                   <div class="basic-field">
                     <label class="basic-field__label" for="basic-split-size"
-                      >Split volumes</label
+                      >Split into volumes</label
                     >
                     <select id="basic-split-size">
                       <option value="" selected>Off (single file)</option>
@@ -1946,7 +1978,6 @@
                   id="basic-extract-archive-info"
                   role="button"
                   tabindex="0"
-                  aria-label="Choose archive to extract"
                 >
                   <span class="basic-archive-info__icon">
                     <i data-lucide="package" class="lucide-icon"></i>
@@ -1963,6 +1994,43 @@
                     ></span>
                   </div>
                 </div>
+              </div>
+              <div class="basic-destination-block" id="basic-extract-to-block">
+                <div class="basic-destination" id="basic-extract-to-row">
+                  <span
+                    class="basic-destination__label"
+                    id="basic-extract-to-label"
+                    >Extract to</span
+                  >
+                  <output
+                    class="basic-destination__path"
+                    id="basic-extract-to-path"
+                    aria-labelledby="basic-extract-to-label"
+                    ><span
+                      class="basic-destination__folder"
+                      id="basic-extract-to-folder"
+                    ></span
+                    ><span
+                      class="basic-destination__name"
+                      id="basic-extract-to-name"
+                    ></span
+                  ></output>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary basic-destination__change"
+                    id="basic-change-extract-folder"
+                    type="button"
+                    aria-label="Change extract folder"
+                  >
+                    Change
+                  </button>
+                </div>
+                <p
+                  class="basic-destination__note"
+                  id="basic-extract-to-note"
+                  hidden
+                >
+                  Each archive gets its own folder.
+                </p>
               </div>
               <hr
                 class="basic-divider"
@@ -1994,7 +2062,7 @@
                       class="basic-btn basic-btn--sm basic-btn--secondary"
                       id="basic-choose-extract"
                     >
-                      Choose folder
+                      Choose…
                     </button>
                   </div>
                 </div>
@@ -2002,12 +2070,12 @@
                   class="basic-more-options"
                   id="basic-extract-password-field"
                 >
-                  <summary>Password</summary>
+                  <summary>Archive password</summary>
                   <div class="basic-field">
                     <label
                       class="basic-field__label"
                       for="basic-extract-password"
-                      >Password</label
+                      >Archive password</label
                     >
                     <div class="basic-input-row">
                       <input
@@ -2154,7 +2222,6 @@
                 id="basic-browse-archive-info"
                 role="button"
                 tabindex="0"
-                aria-label="Choose archive to browse"
               >
                 <span class="basic-archive-info__icon">
                   <i data-lucide="package" class="lucide-icon"></i>
@@ -2250,7 +2317,7 @@
         <div class="grid">
           <section class="panel">
             <div class="panel__header">
-              <h2>Archive Session</h2>
+              <h2>Archive session</h2>
               <div class="segmented" role="group" aria-label="Operation mode">
                 <button
                   class="segmented__btn is-active"
@@ -2293,7 +2360,7 @@
                   data-quick-action-btn
                   data-quick-action="add-run-balanced"
                 >
-                  Run Balanced
+                  Run balanced
                 </button>
                 <button
                   class="btn btn--sm"
@@ -2301,7 +2368,7 @@
                   data-quick-action-btn
                   data-quick-action="add-run-ultra"
                 >
-                  Run Ultra
+                  Run ultra
                 </button>
                 <button
                   class="btn btn--sm"
@@ -2317,7 +2384,7 @@
                   data-quick-action-btn
                   data-quick-action="add-preview"
                 >
-                  Preview Command
+                  Preview command
                 </button>
                 <button
                   class="btn btn--ghost btn--sm"
@@ -2325,7 +2392,7 @@
                   data-quick-action-btn
                   data-quick-action="add-repeat"
                 >
-                  Repeat Last
+                  Repeat last
                 </button>
               </div>
               <div class="quick-actions__row" data-mode-visible="extract">
@@ -2335,7 +2402,7 @@
                   data-quick-action-btn
                   data-quick-action="extract-now"
                 >
-                  Extract Now
+                  Extract now
                 </button>
                 <button
                   class="btn btn--sm"
@@ -2359,7 +2426,7 @@
                   data-quick-action-btn
                   data-quick-action="extract-preview"
                 >
-                  Preview Command
+                  Preview command
                 </button>
                 <button
                   class="btn btn--ghost btn--sm"
@@ -2367,7 +2434,7 @@
                   data-quick-action-btn
                   data-quick-action="extract-repeat"
                 >
-                  Repeat Last
+                  Repeat last
                 </button>
               </div>
               <div class="quick-actions__row" data-mode-visible="browse">
@@ -2401,7 +2468,7 @@
                   data-quick-action-btn
                   data-quick-action="browse-switch-extract"
                 >
-                  Switch to Extract
+                  Switch to extract
                 </button>
                 <button
                   class="btn btn--ghost btn--sm"
@@ -2409,7 +2476,7 @@
                   data-quick-action-btn
                   data-quick-action="browse-repeat"
                 >
-                  Repeat Last
+                  Repeat last
                 </button>
               </div>
             </div>
@@ -2487,11 +2554,11 @@
                     <label for="format">Format</label>
                     <select id="format">
                       <option value="7z">7z</option>
-                      <option value="zip">zip</option>
-                      <option value="tar">tar</option>
-                      <option value="gzip">gzip</option>
-                      <option value="bzip2">bzip2</option>
-                      <option value="xz">xz</option>
+                      <option value="zip">ZIP</option>
+                      <option value="tar">TAR</option>
+                      <option value="gzip">GZIP</option>
+                      <option value="bzip2">BZIP2</option>
+                      <option value="xz">XZ</option>
                     </select>
                   </div>
                   <div class="field">
@@ -2533,7 +2600,7 @@
                       autocomplete="off"
                     />
                     <button class="btn btn--sm" id="choose-output">
-                      Browse
+                      Choose…
                     </button>
                   </div>
                 </div>
@@ -2581,7 +2648,7 @@
                       autocomplete="off"
                     />
                     <button class="btn btn--sm" id="choose-extract">
-                      Browse
+                      Choose…
                     </button>
                   </div>
                 </div>
@@ -2723,14 +2790,14 @@
                     id="browse-selective"
                     data-power-only
                   >
-                    Extract selected...
+                    Extract selected…
                   </button>
                   <button
                     class="btn btn--accent-outline"
                     id="browse-add-files"
                     data-power-only
                   >
-                    Add files...
+                    Add files…
                   </button>
                   <button
                     class="btn btn--accent-outline"
@@ -2738,7 +2805,7 @@
                     data-power-only
                     title="Convert this archive to another format, with its own password and output name"
                   >
-                    Convert...
+                    Convert…
                   </button>
                   <button class="btn btn--ghost" id="browse-test">
                     Test integrity
@@ -2760,10 +2827,7 @@
                         <select id="method">
                           <option value="lzma2" selected>LZMA2</option>
                           <option value="lzma">LZMA</option>
-                          <option value="ppmd">PPMd</option>
-                          <option value="bzip2">BZip2</option>
                           <option value="deflate">Deflate</option>
-                          <option value="zstd">Zstandard</option>
                         </select>
                       </div>
                       <div class="field">
@@ -2844,8 +2908,12 @@
                   <summary>Security and extras</summary>
                   <div class="session-details__body">
                     <div class="field">
-                      <label>Options</label>
-                      <div class="toggle-row">
+                      <label id="security-options-label">Options</label>
+                      <div
+                        class="toggle-row"
+                        role="group"
+                        aria-labelledby="security-options-label"
+                      >
                         <label
                           class="toggle"
                           title="Add or refresh files inside the existing archive at the output path instead of creating a new one"
@@ -2865,7 +2933,7 @@
                       </div>
                     </div>
                     <div class="field">
-                      <label for="password">Password</label>
+                      <label for="password">Archive password</label>
                       <div class="input-row">
                         <input
                           type="password"
@@ -2926,7 +2994,7 @@
         aria-label="Debug console"
       >
         <div class="debug-console__header">
-          <h2 class="debug-console__title">Debug Console</h2>
+          <h2 class="debug-console__title">Debug console</h2>
           <div class="debug-console__actions">
             <button
               type="button"
@@ -2970,12 +3038,6 @@
       <footer class="statusbar">
         <span class="statusbar__item" id="status" aria-live="polite">Idle</span>
         <span class="statusbar__item" id="progress" hidden></span>
-        <span
-          class="sr-only"
-          id="progress-announcer"
-          role="status"
-          aria-live="polite"
-        ></span>
         <button
           type="button"
           class="statusbar__item update-ready-indicator"

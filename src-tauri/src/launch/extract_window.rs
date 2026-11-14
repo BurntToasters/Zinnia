@@ -2,10 +2,12 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Manager;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use tauri_plugin_dialog::DialogExt;
 
-use crate::process::{terminate_registered_child_async, RunningProcess};
+use crate::process::{terminate_registered_child_async, ProcessState, RunningProcess};
 
-use super::open_path::derive_extract_destination_path;
+use super::open_path::{apply_picked_folder, derive_extract_destination_path};
 use super::{
     ExtractBoundDestination, ExtractBoundPaths, ExtractOpenAllowlist, ExtractQueue,
     EXTRACT_ONLY_LAUNCH, MAC_FALLBACK_MAIN_PENDING,
@@ -351,6 +353,175 @@ pub fn mark_main_window_ready(app: tauri::AppHandle) {
     super::MAIN_WINDOW_READY.store(true, Ordering::SeqCst);
     super::open_routing::emit_pending_shell_handoff_error(&app);
     crate::app_menu::flush_pending_menu_actions(&app);
+    #[cfg(feature = "e2e")]
+    start_e2e_extract_trigger(&app);
+}
+
+const CHOOSE_BUSY_MESSAGE: &str =
+    "Wait for this extraction to finish before choosing another folder.";
+
+pub(crate) fn assert_extract_window_label(label: &str) -> Result<(), String> {
+    if super::is_extract_window_label(label) {
+        Ok(())
+    } else {
+        Err("Only quick-extract windows can choose a destination folder.".to_string())
+    }
+}
+
+pub(crate) fn extract_owner_busy(
+    owner: Option<&str>,
+    label: &str,
+    child: bool,
+    preparing: bool,
+    cancelling: bool,
+) -> bool {
+    owner == Some(label) && (child || preparing || cancelling)
+}
+
+fn ensure_window_slot_idle(process: &ProcessState, label: &str) -> Result<(), String> {
+    if extract_owner_busy(
+        process.owner_label.as_deref(),
+        label,
+        process.child.is_some(),
+        process.preparing,
+        process.cancelling,
+    ) {
+        Err(CHOOSE_BUSY_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn pick_extract_folder(app: &tauri::AppHandle) -> Result<Option<std::path::PathBuf>, String> {
+    #[cfg(feature = "e2e")]
+    {
+        if super::e2e_session_active() {
+            return Ok(take_e2e_picked_folder());
+        }
+    }
+    let dialog_app = app.clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .set_title("Choose a folder for the extracted files")
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|error| format!("Folder dialog failed: {error}"))?;
+    match chosen {
+        Some(path) => path
+            .into_path()
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        None => Ok(None),
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+async fn pick_extract_folder(
+    _app: &tauri::AppHandle,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Err("Choosing another folder is not supported on this platform.".to_string())
+}
+
+#[tauri::command]
+pub async fn choose_extract_destination(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+) -> Result<Option<String>, String> {
+    let label = window.label().to_string();
+    assert_extract_window_label(&label)?;
+    {
+        let slot = app.state::<RunningProcess>();
+        let process = slot
+            .0
+            .lock()
+            .map_err(|_| "Process lock poisoned".to_string())?;
+        ensure_window_slot_idle(&process, &label)?;
+    }
+    {
+        let bindings = app.state::<ExtractBoundDestination>();
+        let guard = bindings
+            .0
+            .lock()
+            .map_err(|_| "Extract destination lock poisoned.".to_string())?;
+        if !guard.contains_key(&label) {
+            return Err("Extract window has no bound destination.".to_string());
+        }
+    }
+    let picked = pick_extract_folder(&app).await?;
+    let slot = app.state::<RunningProcess>();
+    let process = slot
+        .0
+        .lock()
+        .map_err(|_| "Process lock poisoned".to_string())?;
+    ensure_window_slot_idle(&process, &label)?;
+    let bindings = app.state::<ExtractBoundDestination>();
+    let mut guard = bindings
+        .0
+        .lock()
+        .map_err(|_| "Extract destination lock poisoned.".to_string())?;
+    let chosen = apply_picked_folder(&mut guard, &label, picked)?;
+    Ok(chosen.map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[cfg(feature = "e2e")]
+static E2E_EXTRACT_TRIGGER_STARTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "e2e")]
+#[derive(serde::Deserialize)]
+struct E2eOpenExtractRequest {
+    paths: Vec<String>,
+}
+
+#[cfg(feature = "e2e")]
+fn e2e_work_file(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("ZINNIA_E2E_WORK").map(|dir| std::path::PathBuf::from(dir).join(name))
+}
+
+#[cfg(feature = "e2e")]
+fn take_e2e_file(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::remove_file(path);
+    Some(text)
+}
+
+#[cfg(feature = "e2e")]
+fn take_e2e_picked_folder() -> Option<std::path::PathBuf> {
+    let text = take_e2e_file(&e2e_work_file("e2e-extract-pick.txt")?)?;
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| std::path::PathBuf::from(trimmed))
+}
+
+#[cfg(feature = "e2e")]
+fn start_e2e_extract_trigger(app: &tauri::AppHandle) {
+    if !super::e2e_session_active() {
+        return;
+    }
+    let Some(request_file) = e2e_work_file("e2e-open-extract.json") else {
+        return;
+    };
+    if E2E_EXTRACT_TRIGGER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let Some(text) = take_e2e_file(&request_file) else {
+            continue;
+        };
+        let Ok(request) = serde_json::from_str::<E2eOpenExtractRequest>(&text) else {
+            continue;
+        };
+        let target = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if let Err(error) = spawn_extract_window(&target, request.paths) {
+                eprintln!("E2E quick-extract trigger failed: {error}");
+            }
+        });
+    });
 }
 
 #[tauri::command]
@@ -518,4 +689,62 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     }
 
     result.map(|_| ())
+}
+
+#[cfg(test)]
+mod choose_destination_tests {
+    use super::{assert_extract_window_label, extract_owner_busy};
+
+    #[test]
+    fn only_extract_window_labels_may_choose_a_destination() {
+        assert!(assert_extract_window_label("extract-0").is_ok());
+        assert!(assert_extract_window_label("extract-42").is_ok());
+        for label in ["main", "settings", "debug-console", "extract", ""] {
+            assert!(assert_extract_window_label(label).is_err(), "{label}");
+        }
+    }
+
+    #[test]
+    fn busy_slot_owned_by_this_window_blocks_a_choice() {
+        assert!(extract_owner_busy(
+            Some("extract-0"),
+            "extract-0",
+            true,
+            false,
+            false
+        ));
+        assert!(extract_owner_busy(
+            Some("extract-0"),
+            "extract-0",
+            false,
+            true,
+            false
+        ));
+        assert!(extract_owner_busy(
+            Some("extract-0"),
+            "extract-0",
+            false,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn idle_slot_or_another_owner_does_not_block_a_choice() {
+        assert!(!extract_owner_busy(
+            Some("extract-0"),
+            "extract-0",
+            false,
+            false,
+            false
+        ));
+        assert!(!extract_owner_busy(None, "extract-0", true, true, true));
+        assert!(!extract_owner_busy(
+            Some("main"),
+            "extract-0",
+            true,
+            true,
+            true
+        ));
+    }
 }

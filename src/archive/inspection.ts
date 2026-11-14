@@ -34,6 +34,7 @@ import {
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
 import { showToast } from "../toast";
+import { onBrowseSecretsForget } from "../ui/inputs";
 
 export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
 
@@ -68,6 +69,29 @@ export async function browsedArchivePasswordFor(
   browsedArchivePassword = null;
   return null;
 }
+
+export type BrowsedArchivePassword = {
+  archive: string;
+  identity: string;
+  password: string;
+};
+
+export function currentBrowsedArchivePassword(): BrowsedArchivePassword | null {
+  return browsedArchivePassword;
+}
+
+export function restoreBrowsedArchivePassword(
+  record: BrowsedArchivePassword | null,
+): void {
+  if (record === null) return;
+  browsedArchivePassword = { ...record };
+}
+
+export function forgetBrowsedArchivePassword(): void {
+  browsedArchivePassword = null;
+}
+
+onBrowseSecretsForget(forgetBrowsedArchivePassword);
 
 function requireFinalArchiveIdentity(
   result: { archiveIdentityAfter?: string },
@@ -324,7 +348,7 @@ export async function browseArchive(
       }
       setStatus("Archive listing too large", 3000);
       showToast(
-        "This archive has too many entries to show (listing over 64 MiB, roughly 200,000 entries). You can still extract all of it.",
+        "This archive has too many entries to show (listing over 64 MiB). You can still extract all of it.",
         "error",
         0,
       );

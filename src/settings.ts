@@ -15,6 +15,7 @@ import { getCompressionSecuritySupport } from "./compression-security";
 import { getDefaultThreads } from "./window-events";
 import { syncWorkspaceWindowFx } from "./window-fx";
 import { confirmWithE2eQueue } from "./e2e-dialog";
+import { confirmChoice } from "./prompt-modal";
 
 const METHOD_LABELS: Record<string, string> = {
   lzma2: "LZMA2",
@@ -22,12 +23,36 @@ const METHOD_LABELS: Record<string, string> = {
   deflate: "Deflate",
 };
 
-export const DISCARD_SETTINGS_TITLE = "Discard unsaved settings";
+const DISCARD_SETTINGS_TITLE = "Discard unsaved settings";
+const REPLACE_SETTINGS_TITLE = "Replace unreadable settings";
+const UNREADABLE_PAUSE_NOTE =
+  "Automatic saves are paused until you save in Settings.";
 
 let settingsModalBasicWindowEffects: boolean | null = null;
 /** Modal values when it opened; a different value on close means unsaved edits. */
 let settingsSnapshotOnOpen: string | null = null;
 let discardPromptOpen = false;
+let settingsFileUnreadable = false;
+let settingsReplacementPermitted = false;
+
+export class SettingsFileReplacementDeclinedError extends Error {
+  constructor() {
+    super(
+      "Settings were not saved because the unreadable settings file was kept.",
+    );
+    this.name = "SettingsFileReplacementDeclinedError";
+  }
+}
+
+export function isSettingsFileUnreadable(): boolean {
+  return settingsFileUnreadable;
+}
+
+export function takeSettingsReplacementPermit(): boolean {
+  const permitted = settingsReplacementPermitted;
+  settingsReplacementPermitted = false;
+  return permitted;
+}
 
 export function applyTheme(pref: string) {
   const resolved =
@@ -46,27 +71,87 @@ export async function loadSettings(): Promise<UserSettings> {
 }
 
 export async function loadSettingsWithMetadata(): Promise<LoadSettingsResult> {
+  const result = await readSettingsFile();
+  settingsFileUnreadable = result.malformed;
+  return result;
+}
+
+async function readSettingsFile(): Promise<LoadSettingsResult> {
   try {
     const raw = await invoke<string>("load_settings");
-    return parseSettingsRaw(raw);
+    const parsed = parseSettingsRaw(raw);
+    if (!parsed.malformed) return parsed;
+    return {
+      ...parsed,
+      warning: `${parsed.warning ?? "Settings file is malformed. Defaults were loaded."} ${UNREADABLE_PAUSE_NOTE}`,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       settings: { ...SETTING_DEFAULTS },
       extras: {},
       malformed: true,
-      warning: `Settings file could not be read (${msg}). Defaults were loaded.`,
+      warning: `Settings file could not be read (${msg}). Defaults were loaded. ${UNREADABLE_PAUSE_NOTE}`,
     };
   }
 }
 
+type SaveSettingsOptions = {
+  replacementAllowed?: boolean;
+};
+
 export async function saveSettings(
   settings: UserSettings,
   extras: Record<string, unknown> = {},
+  options: SaveSettingsOptions = {},
 ): Promise<void> {
+  if (settingsFileUnreadable && options.replacementAllowed !== true) {
+    const confirmed = await confirmReplacingUnreadableSettings();
+    if (!confirmed) throw new SettingsFileReplacementDeclinedError();
+  }
   await invoke("save_settings", {
     json: JSON.stringify(mergeSettingsPayload(settings, extras)),
   });
+  settingsFileUnreadable = false;
+}
+
+function confirmReplacingUnreadableSettings(): Promise<boolean> {
+  return confirmWithE2eQueue(
+    () =>
+      confirmChoice({
+        title: REPLACE_SETTINGS_TITLE,
+        message:
+          "Zinnia could not read your settings file, so it is using defaults. Saving will replace the unreadable file with your current settings. Continue?",
+        confirmLabel: "Replace and save",
+        cancelLabel: "Keep editing",
+      }),
+    REPLACE_SETTINGS_TITLE,
+  );
+}
+
+function guardUnreadableSettingsSave(event: MouseEvent): void {
+  if (!settingsFileUnreadable || settingsReplacementPermitted) return;
+  const target = event.target;
+  if (!(target instanceof Element) || !target.closest("#save-settings")) return;
+  event.stopPropagation();
+  event.preventDefault();
+  void confirmReplacingUnreadableSettings().then((confirmed) => {
+    if (!confirmed) return;
+    settingsReplacementPermitted = true;
+    try {
+      document.getElementById("save-settings")?.click();
+    } finally {
+      takeSettingsReplacementPermit();
+    }
+  });
+}
+
+export function persistableSettingsSnapshot(): UserSettings {
+  const snapshot = { ...state.currentSettings };
+  if (settingsModalBasicWindowEffects !== null) {
+    snapshot.basicWindowEffects = settingsModalBasicWindowEffects;
+  }
+  return snapshot;
 }
 
 export function applySettingsToForm() {
@@ -135,7 +220,7 @@ function sessionCompressionValues(): CompressionFormValues {
  * Rebuild the Settings method list for a format, as the main form does.
  * Formats without a method choice get a disabled N/A option.
  */
-export function syncSettingsMethodOptions(
+function syncSettingsMethodOptions(
   format: UserSettings["format"],
   preferred: string,
 ): void {
@@ -305,7 +390,7 @@ export function syncQuickExtractWarmIdleControl(): void {
   $<HTMLSelectElement>("s-quick-extract-warm-idle").disabled = !enabled;
 }
 
-export async function syncBasicWindowEffectsVisibility(): Promise<void> {
+async function syncBasicWindowEffectsVisibility(): Promise<void> {
   const row = document.getElementById("setting-basic-window-effects");
   if (!row) return;
   let supports = false;
@@ -327,6 +412,10 @@ export function openSettingsModal() {
   }
   const overlay = $("settings-overlay");
   if (!overlay.hidden) return;
+  if (!overlay.dataset.unreadableSaveGuard) {
+    overlay.dataset.unreadableSaveGuard = "1";
+    overlay.addEventListener("click", guardUnreadableSettingsSave, true);
+  }
 
   settingsModalBasicWindowEffects ??= state.currentSettings.basicWindowEffects;
   populateSettingsModal();
@@ -372,7 +461,7 @@ function hasUnsavedSettingsEdits(): boolean {
   );
 }
 
-export type CloseSettingsOptions = {
+type CloseSettingsOptions = {
   preserveLivePreview?: boolean;
   /** Set by Save: the modal values were just persisted, so nothing is discarded. */
   saved?: boolean;

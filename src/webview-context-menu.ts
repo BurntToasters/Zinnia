@@ -34,9 +34,7 @@ const TEXT_INPUT_TYPES = new Set([
 ]);
 
 /** Cut, copy and paste are only useful where text can be edited. */
-export function isEditableContextMenuTarget(
-  target: EventTarget | null,
-): boolean {
+function isEditableContextMenuTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target instanceof HTMLTextAreaElement) return true;
   if (target instanceof HTMLInputElement) {

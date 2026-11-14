@@ -8,19 +8,14 @@ import { showToast } from "../toast";
 import { userFacingBackendError } from "../error-hints";
 import { log } from "../ui";
 import { truncateForDialog } from "./runtime";
-import {
-  filterBrowseEntriesByQuery,
-  clearPathSelection,
-  selectEntries,
-  detectWindowsMemberPaths,
-} from "../selective-extract";
+import { clearPathSelection, selectEntries } from "../selective-extract";
 import {
   getOrCreateSelection,
   getCachedArchiveInfo,
 } from "./browse-selective-helpers";
 import {
   renderSelectiveExtractModal,
-  collectRenderedSelectiveScope,
+  collectPickerSelectAllScope,
 } from "./selective-tree-ui";
 
 let browseArchiveLoader:
@@ -39,14 +34,67 @@ export function registerBrowseArchiveLoader(
   browseArchiveLoader = loader;
 }
 
+function createBrowseRow(
+  entry: BrowseEntry,
+  folderClass: string,
+): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  if (entry.isFolder) tr.className = folderClass;
+
+  const tdName = document.createElement("td");
+  const iconName = entry.isFolder ? "folder" : "file";
+  const icon = document.createElement("i");
+  icon.setAttribute("data-lucide", iconName);
+  icon.className = "lucide-icon lucide-icon--inline";
+  const label = document.createElement("span");
+  label.textContent = entry.path;
+  tdName.replaceChildren(icon, label);
+  tdName.title = entry.path;
+  tdName.classList.add("cell-break");
+
+  const tdSize = document.createElement("td");
+  tdSize.className = "size-col cell-tabular";
+  tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
+
+  const tdPacked = document.createElement("td");
+  tdPacked.className = "size-col cell-tabular";
+  tdPacked.textContent = entry.isFolder ? "-" : formatSize(entry.packedSize);
+
+  const tdModified = document.createElement("td");
+  tdModified.textContent = entry.modified;
+  tr.append(tdName, tdSize, tdPacked, tdModified);
+  return tr;
+}
+
+function createBrowseNotice(): {
+  row: HTMLTableRowElement;
+  text: HTMLElement;
+  button: HTMLButtonElement;
+} {
+  const row = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = 4;
+  td.className = "browse-empty";
+  const text = document.createElement("span");
+  text.dataset.browseNotice = "";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn btn--sm";
+  button.dataset.browseShowMore = "";
+  button.textContent = `Show ${MAX_RENDERED_BROWSE_ROWS.toLocaleString()} more`;
+  td.append(text, " ", button);
+  row.appendChild(td);
+  return { row, text, button };
+}
+
 function renderBrowseRows(
   tbody: HTMLElement,
   entries: BrowseEntry[],
   folderClass: string,
 ): void {
   tbody.replaceChildren();
-  const fragment = document.createDocumentFragment();
   if (entries.length === 0) {
+    const fragment = document.createDocumentFragment();
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 4;
@@ -57,47 +105,48 @@ function renderBrowseRows(
     tbody.appendChild(fragment);
     return;
   }
-  for (const entry of entries.slice(0, MAX_RENDERED_BROWSE_ROWS)) {
-    const tr = document.createElement("tr");
-    if (entry.isFolder) tr.className = folderClass;
 
-    const tdName = document.createElement("td");
-    const iconName = entry.isFolder ? "folder" : "file";
-    const icon = document.createElement("i");
-    icon.setAttribute("data-lucide", iconName);
-    icon.className = "lucide-icon lucide-icon--inline";
-    const label = document.createElement("span");
-    label.textContent = entry.path;
-    tdName.replaceChildren(icon, label);
-    tdName.title = entry.path;
-    tdName.classList.add("cell-break");
+  const basicCap = folderClass === "browse-folder";
+  const notice =
+    entries.length > MAX_RENDERED_BROWSE_ROWS ? createBrowseNotice() : null;
+  let shown = 0;
+  const appendRows = (end: number): HTMLTableRowElement | null => {
+    const fragment = document.createDocumentFragment();
+    let first: HTMLTableRowElement | null = null;
+    for (const entry of entries.slice(shown, end)) {
+      const tr = createBrowseRow(entry, folderClass);
+      first ??= tr;
+      fragment.appendChild(tr);
+    }
+    tbody.insertBefore(fragment, notice?.row ?? null);
+    shown = end;
+    return first;
+  };
+  const updateNotice = (): void => {
+    if (!notice) return;
+    const done = shown >= entries.length;
+    notice.text.textContent = done
+      ? `Showing all ${entries.length.toLocaleString()} entries.`
+      : `Showing the first ${shown.toLocaleString()} of ${entries.length.toLocaleString()} entries.${basicCap ? "" : " Use selective extraction search to find other entries."}`;
+    notice.button.hidden = done;
+  };
 
-    const tdSize = document.createElement("td");
-    tdSize.className = "size-col cell-tabular";
-    tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
-
-    const tdPacked = document.createElement("td");
-    tdPacked.className = "size-col cell-tabular";
-    tdPacked.textContent = entry.isFolder ? "-" : formatSize(entry.packedSize);
-
-    const tdModified = document.createElement("td");
-    tdModified.textContent = entry.modified;
-    tr.append(tdName, tdSize, tdPacked, tdModified);
-    fragment.appendChild(tr);
+  if (notice) tbody.appendChild(notice.row);
+  appendRows(Math.min(entries.length, MAX_RENDERED_BROWSE_ROWS));
+  if (notice) {
+    updateNotice();
+    notice.button.addEventListener("click", () => {
+      const first = appendRows(
+        Math.min(entries.length, shown + MAX_RENDERED_BROWSE_ROWS),
+      );
+      updateNotice();
+      triggerIconRefresh();
+      if (notice.button.hidden && first) {
+        first.tabIndex = -1;
+        first.focus();
+      }
+    });
   }
-  if (entries.length > MAX_RENDERED_BROWSE_ROWS) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 4;
-    td.className = "browse-empty";
-    const basicCap = folderClass === "browse-folder";
-    td.textContent = basicCap
-      ? `Showing the first ${MAX_RENDERED_BROWSE_ROWS.toLocaleString()} of ${entries.length.toLocaleString()} entries.`
-      : `Showing the first ${MAX_RENDERED_BROWSE_ROWS.toLocaleString()} of ${entries.length.toLocaleString()} entries. Use selective extraction search to find other entries.`;
-    tr.appendChild(td);
-    fragment.appendChild(tr);
-  }
-  tbody.appendChild(fragment);
 }
 
 export function renderBrowseTable(info: ArchiveInfo) {
@@ -245,29 +294,16 @@ export function selectAllVisibleInPicker(): void {
   if (!archive) return;
   const info = getCachedArchiveInfo(archive);
   if (!info) return;
-  const searching = state.selectiveSearchQuery.trim().length > 0;
-  const visibleEntries = filterBrowseEntriesByQuery(
+  // Select all must only touch rendered rows (same budget + expansion state as
+  // the picker), including non-search tree views with collapsed folders.
+  const { targets, recursionScope, windowsPaths } = collectPickerSelectAllScope(
     info.entries,
     state.selectiveSearchQuery,
   );
-  const windowsPaths = detectWindowsMemberPaths(info.entries);
-  // Select all must only touch rendered rows (same budget + expansion state as
-  // the picker), including non-search tree views with collapsed folders.
-  const scopeEntries = collectRenderedSelectiveScope(
-    searching ? visibleEntries : info.entries,
-    searching,
-    windowsPaths,
-  );
   // Rendered rows are the selection targets, but collapsed folders still need
   // the complete archive as their recursion scope. Search remains visible-only.
-  const recursionScope = searching ? scopeEntries : info.entries;
   const current = getOrCreateSelection(archive);
-  const next = selectEntries(
-    current,
-    scopeEntries,
-    recursionScope,
-    windowsPaths,
-  );
+  const next = selectEntries(current, targets, recursionScope, windowsPaths);
   cacheSelection(archive, next);
   renderSelectiveExtractModal();
 }

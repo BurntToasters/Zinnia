@@ -28,13 +28,15 @@ use super::super::{
 };
 use super::argv::{apply_backend_link_switches, harden_7z_args, pin_existing_zip_output_type};
 use super::spawn::{
-    collect_command_output, complete_password_transport, mask_password_arg_tokens,
-    spawn_7z_noninteractive, terminate_registered_child_async,
+    collect_command_output, collect_command_output_filtered, complete_password_transport,
+    mask_password_arg_tokens, spawn_7z_noninteractive, terminate_registered_child_async,
 };
 use super::{
     assert_probed_version_matches_bundle, parse_7z_version, parse_run_7z_request, Run7zRequest,
 };
-use crate::output::{output_limit_for_command, sanitize_output, MAX_OUTPUT_BYTES};
+use crate::output::{
+    output_limit_for_command, sanitize_output, ListingLineFilter, WarningScan, MAX_OUTPUT_BYTES,
+};
 use crate::progress::parse_progress_line;
 
 pub(super) fn release_snapshot_handles_for_plan(plan: &CleanupPlan) {
@@ -425,74 +427,7 @@ pub(crate) fn is_compound_tar_operation(args: &[String]) -> bool {
 /// 7-Zip exit 1 is publishable only for known metadata-only warnings. Data,
 /// path, password, and unknown warnings remain fail-closed and roll back.
 pub(crate) fn extract_warning_is_metadata_only(stdout: &str, stderr: &str) -> bool {
-    let output = format!("{stdout}\n{stderr}").to_ascii_lowercase();
-    let unsafe_markers = [
-        "dangerous link",
-        "cannot open",
-        "cannot create",
-        "cannot set length",
-        "crc failed",
-        "data error",
-        "unexpected end",
-        "wrong password",
-        "unsupported method",
-        "no files to process",
-    ];
-    if unsafe_markers.iter().any(|marker| output.contains(marker)) {
-        return false;
-    }
-    let allowed_markers = [
-        "cannot set owner",
-        "cannot set file attribute",
-        "cannot set file time",
-        "data after the end of archive",
-        "data after the end of the payload data",
-        "archive is open with offset",
-    ];
-    if !allowed_markers.iter().any(|marker| output.contains(marker)) {
-        return false;
-    }
-
-    // 7-Zip writes diagnostic detail to stderr. Reject an unfamiliar stderr
-    // line even when a known metadata warning also occurred.
-    if stderr
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .any(|line| {
-            let line = line.to_ascii_lowercase();
-            !allowed_markers.iter().any(|marker| line.contains(marker))
-        })
-    {
-        return false;
-    }
-    // Some builds put warnings on stdout. Normal progress is allowed, but any
-    // unknown warning/error-labelled line makes exit 1 fail closed. 7-Zip's
-    // summary lines use "Errors:" / "System errors:" (plural), which neither
-    // `contains("warning")` nor `starts_with("error:")` catches.
-    !stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .any(|line| {
-            let line = line.to_ascii_lowercase();
-            (line.contains("warning")
-                || line.starts_with("error:")
-                || line.starts_with("errors:")
-                || line.starts_with("archives with errors")
-                || line.contains("system error"))
-                && !line.starts_with("warnings:")
-                && !is_7zip_warnings_summary(&line)
-                && !allowed_markers.iter().any(|marker| line.contains(marker))
-        })
-}
-
-/// 7-Zip's end-of-run summary, e.g. `Archives with Warnings: 1`. Only that
-/// exact shape with a numeric count is exempt; any other "warning" line still
-/// fails closed. Expects a lowercased, trimmed line.
-fn is_7zip_warnings_summary(line: &str) -> bool {
-    line.strip_prefix("archives with warnings: ")
-        .is_some_and(|count| !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()))
+    WarningScan::from_text(stdout).metadata_only(stderr)
 }
 
 fn find_single_compound_tar(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
@@ -566,6 +501,7 @@ pub(super) async fn prepare_compound_tar_snapshot(
         .ok_or_else(|| "Compound TAR snapshot has no private parent directory.".to_string())?;
     let token = super::super::staging::random_token()?;
     let outer_stage = snapshot_parent.join(format!(".zinnia-compound-{token}"));
+    crate::validation::reject_extract_output_wildcard(&outer_stage.to_string_lossy())?;
     crate::fs_secure::create_private_dir(&outer_stage)
         .map_err(|error| format!("Could not create compound TAR staging: {error}"))?;
 
@@ -807,7 +743,19 @@ pub(super) async fn run_7z_inner(
                 .unwrap_or_else(|| "Archive path failed validation.".to_string()));
         }
         if args.first().map(String::as_str) == Some("x") {
-            match crate::quarantine::read_quarantine(std::path::Path::new(archive)) {
+            #[cfg(target_os = "macos")]
+            let quarantine_source =
+                match crate::path_safety::resolve_regular_file_input(std::path::Path::new(archive))
+                {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        release_prepare_slot_best_effort(&state);
+                        return Err(error);
+                    }
+                };
+            #[cfg(not(target_os = "macos"))]
+            let quarantine_source = std::path::PathBuf::from(archive);
+            match crate::quarantine::read_quarantine(&quarantine_source) {
                 Ok(value) => archive_quarantine = value,
                 Err(error) => {
                     release_prepare_slot_best_effort(&state);
@@ -889,9 +837,15 @@ pub(super) async fn run_7z_inner(
 
     let recovery_app = app.clone();
     let recovery_result =
-        tokio::task::spawn_blocking(move || recover_interrupted_transaction(&recovery_app))
+        match tokio::task::spawn_blocking(move || recover_interrupted_transaction(&recovery_app))
             .await
-            .map_err(|error| format!("Archive recovery worker failed: {error}"))?;
+        {
+            Ok(result) => result,
+            Err(error) => {
+                release_prepare_slot_best_effort(&state);
+                return Err(format!("Archive recovery worker failed: {error}"));
+            }
+        };
     if let Err(error) = recovery_result {
         release_prepare_slot_best_effort(&state);
         return Err(format!(
@@ -1365,38 +1319,43 @@ pub(super) async fn run_7z_inner(
     // password prompts are rejected by validation. Silence is therefore not a
     // reliable hang signal: large compression/update phases may legitimately
     // emit nothing for a long time.
-    let collected = collect_command_output(&mut rx, command_output_limit, |chunk| {
-        // 7z can produce one stdout chunk per file. Keep IPC bounded so a
-        // large archive cannot make the webview spend more time rendering
-        // progress than extracting. Structured state is still emitted as
-        // soon as it is available.
-        if last_raw_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
-            let _ = emit_window.emit_to(
-                progress_target.clone(),
-                "7z-progress",
-                crate::output::strip_control_chars(chunk),
-            );
-            last_raw_progress_emit = std::time::Instant::now();
-            if let Ok(mut activity) = last_progress_activity.lock() {
-                *activity = last_raw_progress_emit;
-            }
-        }
-        if let Some(update) = parse_progress_line(chunk) {
-            if last_structured_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
-                let _ =
-                    emit_window.emit_to(progress_target.clone(), "7z-progress-structured", update);
-                last_structured_progress_emit = std::time::Instant::now();
-                held_structured_update = None;
+    let listing_filter = ListingLineFilter::for_listing_args(&args);
+    let collected =
+        collect_command_output_filtered(&mut rx, command_output_limit, listing_filter, |chunk| {
+            // 7z can produce one stdout chunk per file. Keep IPC bounded so a
+            // large archive cannot make the webview spend more time rendering
+            // progress than extracting. Structured state is still emitted as
+            // soon as it is available.
+            if last_raw_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
+                let _ = emit_window.emit_to(
+                    progress_target.clone(),
+                    "7z-progress",
+                    crate::output::strip_control_chars(chunk),
+                );
+                last_raw_progress_emit = std::time::Instant::now();
                 if let Ok(mut activity) = last_progress_activity.lock() {
-                    *activity = last_structured_progress_emit;
+                    *activity = last_raw_progress_emit;
                 }
-            } else {
-                // Keep the newest throttled update so the stream end can flush it.
-                held_structured_update = Some(update);
             }
-        }
-    })
-    .await;
+            if let Some(update) = parse_progress_line(chunk) {
+                if last_structured_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
+                    let _ = emit_window.emit_to(
+                        progress_target.clone(),
+                        "7z-progress-structured",
+                        update,
+                    );
+                    last_structured_progress_emit = std::time::Instant::now();
+                    held_structured_update = None;
+                    if let Ok(mut activity) = last_progress_activity.lock() {
+                        *activity = last_structured_progress_emit;
+                    }
+                } else {
+                    // Keep the newest throttled update so the stream end can flush it.
+                    held_structured_update = Some(update);
+                }
+            }
+        })
+        .await;
     if let Some(update) = held_structured_update.take() {
         let _ = emit_window.emit_to(progress_target.clone(), "7z-progress-structured", update);
     }

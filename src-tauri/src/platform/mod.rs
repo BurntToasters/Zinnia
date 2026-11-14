@@ -109,7 +109,6 @@ pub fn get_beta_updater_target() -> String {
     };
     let arch = match std::env::consts::ARCH {
         "x86" => "i686",
-        "arm64" => "aarch64",
         other => other,
     };
     let installer = match tauri::utils::platform::bundle_type() {
@@ -361,16 +360,13 @@ pub fn get_cpu_count() -> usize {
 }
 
 // Public API + tauri command companions (needed by generate_handler!).
-#[allow(unused_imports)]
 pub use defaults_cmds::{
     enable_finder_sync, open_finder_services_settings, open_finder_sync_settings,
     open_os_integration_settings, reset_preferred_archiver_to_system, set_zinnia_default_archiver,
 };
-#[allow(unused_imports)]
-pub use integration_status::{get_os_integration_status, os_integration_status_for};
+pub use integration_status::get_os_integration_status;
 
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 pub use integration_status::register_macos_finder_sync;
 
 #[doc(hidden)]

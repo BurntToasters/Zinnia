@@ -1,8 +1,17 @@
+const FILE_NAME_REPORT_LINE = /^\s*(?:[-+] |Path = |\d{1,3}%\s+\d+\s+[-+]\s)/;
+
+function diagnosticStdout(stdout: string): string {
+  return stdout
+    .split(/\r?\n/)
+    .filter((line) => !FILE_NAME_REPORT_LINE.test(line))
+    .join("\n");
+}
+
 export function looksLikePasswordRequiredError(
   stdout: string,
   stderr: string,
 ): boolean {
-  const combined = `${stdout}\n${stderr}`.toLowerCase();
+  const combined = `${diagnosticStdout(stdout)}\n${stderr}`.toLowerCase();
   return (
     combined.includes("wrong password") ||
     combined.includes("can not open encrypted archive") ||
@@ -84,7 +93,7 @@ export function describe7zError(stdout: string, stderr: string): string {
 export function userFacing7zErrorDetail(
   stdout: string,
   stderr: string,
-  fallback = "Something went wrong. Check the activity log for details.",
+  fallback = "Something went wrong. The archive tool did not give a clear reason. Try again.",
 ): string {
   const hint = describe7zError(stdout, stderr);
   return hint || fallback;
@@ -112,7 +121,7 @@ export function userFacingBackendError(detail: string): string {
   const hint = describe7zError("", detail);
   if (hint) return hint;
   if (looksLikeRaw7zOutput(detail)) {
-    return "Something went wrong. Check the activity log for details.";
+    return "Something went wrong. The archive tool did not give a clear reason. Try again.";
   }
   return detail;
 }

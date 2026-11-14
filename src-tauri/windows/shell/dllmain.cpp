@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <new>
+#include <memory>
 #include <algorithm>
 #include <cwchar>
 #include <cwctype>
@@ -109,6 +110,14 @@ static bool AllPathsAreArchives(const std::vector<std::wstring>& paths) {
          std::all_of(paths.begin(), paths.end(), LooksLikeArchive);
 }
 
+struct CoTaskMemFreeDeleter {
+  void operator()(wchar_t* value) const noexcept { CoTaskMemFree(value); }
+};
+
+struct ShellItemReleaser {
+  void operator()(IShellItem* item) const noexcept { item->Release(); }
+};
+
 static HRESULT GetSelectedPaths(IShellItemArray* items,
                                 std::vector<std::wstring>* out) {
   if (!items || !out) return E_INVALIDARG;
@@ -121,17 +130,17 @@ static HRESULT GetSelectedPaths(IShellItemArray* items,
   }
   DWORD resolved = 0;
   for (DWORD i = 0; i < count; ++i) {
-    IShellItem* item = nullptr;
-    hr = items->GetItemAt(i, &item);
+    IShellItem* raw_item = nullptr;
+    hr = items->GetItemAt(i, &raw_item);
+    std::unique_ptr<IShellItem, ShellItemReleaser> item(raw_item);
     if (FAILED(hr) || !item) continue;
-    PWSTR path = nullptr;
-    hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+    PWSTR raw_path = nullptr;
+    hr = item->GetDisplayName(SIGDN_FILESYSPATH, &raw_path);
+    std::unique_ptr<wchar_t, CoTaskMemFreeDeleter> path(raw_path);
     if (SUCCEEDED(hr) && path) {
-      out->emplace_back(path);
+      out->emplace_back(path.get());
       ++resolved;
-      CoTaskMemFree(path);
     }
-    item->Release();
   }
   if (resolved != count) {
     out->clear();
@@ -160,12 +169,12 @@ static HRESULT GetFolderPathFromSite(IUnknown* site, std::wstring* out) {
   folderView->Release();
   if (FAILED(hr) || !folder) return FAILED(hr) ? hr : E_FAIL;
 
-  PWSTR path = nullptr;
-  hr = folder->GetDisplayName(SIGDN_FILESYSPATH, &path);
+  PWSTR raw_path = nullptr;
+  hr = folder->GetDisplayName(SIGDN_FILESYSPATH, &raw_path);
   folder->Release();
+  std::unique_ptr<wchar_t, CoTaskMemFreeDeleter> path(raw_path);
   if (FAILED(hr) || !path) return FAILED(hr) ? hr : E_FAIL;
-  *out = path;
-  CoTaskMemFree(path);
+  *out = path.get();
   return S_OK;
 }
 

@@ -442,6 +442,7 @@ fn main() {
         "get_extract_paths",
         "inspect_extract_destination",
         "close_extract_window",
+        "choose_extract_destination",
         "open_debug_console_window",
         "close_debug_console_window",
         "relay_debug_console_line",

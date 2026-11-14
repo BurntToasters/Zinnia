@@ -198,7 +198,7 @@ describe("audit tools: quick extract window", function () {
     fs.mkdirSync(ROOT, { recursive: true });
   });
 
-  it("offers Retry after a quick extract into an unwritable destination", async () => {
+  it("offers Retry and Choose another folder after a quick extract into an unwritable destination", async () => {
     await $("#extract-error").waitForDisplayed({
       timeout: 120_000,
       timeoutMsg: "quick extract into a read-only destination did not fail",
@@ -210,12 +210,16 @@ describe("audit tools: quick extract window", function () {
       timeoutMsg: "Retry button was not shown after the failed quick extract",
     });
     assert.equal((await retry.getText()).trim(), "Retry");
+    const choose = await $("#choose-folder-btn");
+    await choose.waitForDisplayed({
+      timeout: 10_000,
+      timeoutMsg:
+        "Choose another folder was not shown after the failed quick extract",
+    });
     assert.equal(
-      await browser.execute(
-        () => document.getElementById("choose-folder-btn") !== null,
-      ),
-      false,
-      "Choose another folder must not be offered: the quick-extract destination is bound",
+      (await choose.getText()).trim(),
+      "Choose another folder",
+      "the recovery button for an unwritable destination has the wrong label",
     );
 
     const closeLabel = (await $("#close-btn").getText()).trim();
@@ -223,6 +227,7 @@ describe("audit tools: quick extract window", function () {
       scenario: "quick-extract-unwritable-recovery",
       archive: process.env.ZINNIA_E2E_AUDIT_RO_ARCHIVE ?? null,
       retryVisible: await retry.isDisplayed(),
+      chooseVisible: await choose.isDisplayed(),
       closeLabel,
     });
   });

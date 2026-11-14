@@ -192,6 +192,14 @@ function wireRecentMenuOnce(): void {
   );
 }
 
+function parentFolderText(path: string): string {
+  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (separator < 0) return "";
+  if (separator === 0) return path.slice(0, 1);
+  const parent = path.slice(0, separator);
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
+
 function renderRecentList(recent: string[]): void {
   const wrap = document.getElementById("header-recent");
   const list = document.getElementById("header-recent-menu");
@@ -210,7 +218,13 @@ function renderRecentList(recent: string[]): void {
     btn.type = "button";
     btn.className = "header-recent__item";
     btn.setAttribute("role", "menuitem");
-    btn.textContent = basename(path);
+    const name = document.createElement("span");
+    name.className = "header-recent__name";
+    name.textContent = basename(path);
+    const folder = document.createElement("span");
+    folder.className = "header-recent__folder";
+    folder.textContent = parentFolderText(path);
+    btn.append(name, " ", folder);
     btn.title = path;
     btn.addEventListener("click", () => {
       closeRecentMenu();

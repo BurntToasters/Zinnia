@@ -197,7 +197,7 @@ describe("addFiles", () => {
     expect(state.inputs).toHaveLength(4_096);
     expect(state.inputs.at(-1)).toBe("/tmp/input-4095.txt");
     expect(document.querySelector(".toast")?.textContent).toContain(
-      "1 more were not added",
+      "1 more item was not added",
     );
   });
 

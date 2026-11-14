@@ -29,6 +29,11 @@ export function setButtons(
   $("close-btn").hidden = !showClose;
 }
 
+export function announceExtract(message: string): void {
+  const announcer = document.getElementById("extract-announcer");
+  if (announcer) announcer.textContent = message;
+}
+
 export function stopProgressAt(widthPercent: number, error: boolean): void {
   const fill = $("progress-fill");
   fill.classList.toggle("extract-progress-fill--error", error);

@@ -8,10 +8,21 @@ import {
   closeSelectiveExtractModal,
 } from "../archive";
 import { closeLicensesModal } from "../licenses";
-import { getMode } from "../ui";
-import { syncBasicBeforeRun } from "../basic";
+import { getMode, getWorkspaceMode } from "../ui";
+import { getBasicView, syncBasicBeforeRun, type BasicView } from "../basic";
 import { isEditableTarget } from "../power-helpers";
 import { openShortcutsModal, closeShortcutsModal } from "../power-shortcuts";
+
+const BASIC_PRIMARY_RUN_BUTTON_IDS: Partial<Record<BasicView, string>> = {
+  compress: "basic-run-compress",
+  extract: "basic-run-extract",
+  browse: "basic-browse-extract-all",
+};
+
+function runBasicPrimaryAction(): void {
+  const buttonId = BASIC_PRIMARY_RUN_BUTTON_IDS[getBasicView()];
+  if (buttonId) document.getElementById(buttonId)?.click();
+}
 
 export function wireGlobalKeyboardEvents(): void {
   document.addEventListener("keydown", (e) => {
@@ -81,7 +92,8 @@ export function wireGlobalKeyboardEvents(): void {
         !$("selective-overlay").hidden ||
         !$("command-preview-overlay").hidden ||
         !$("licenses-overlay").hidden ||
-        !$("input-modal-overlay").hidden
+        !$("input-modal-overlay").hidden ||
+        !$("convert-overlay").hidden
       )
         return;
       e.preventDefault();
@@ -97,7 +109,8 @@ export function wireGlobalKeyboardEvents(): void {
         !$("licenses-overlay").hidden ||
         !$("selective-overlay").hidden ||
         !$("command-preview-overlay").hidden ||
-        !$("shortcuts-overlay").hidden
+        !$("shortcuts-overlay").hidden ||
+        !$("convert-overlay").hidden
       )
         return;
       // The backend runs at most one 7z operation at a time. Basic
@@ -112,6 +125,10 @@ export function wireGlobalKeyboardEvents(): void {
       )
         return;
       e.preventDefault();
+      if (getWorkspaceMode() === "basic") {
+        runBasicPrimaryAction();
+        return;
+      }
       syncBasicBeforeRun();
       if (getMode() === "browse") void browseArchive();
       else void runAction();

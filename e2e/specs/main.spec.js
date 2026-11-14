@@ -264,10 +264,12 @@ describe("Zinnia main window", () => {
       "automatic Basic destination must follow the new archive",
     );
 
-    // A typed destination is the user's choice and survives a replacement.
+    // A typed destination belongs to the archive it was typed for; a replacement re-derives it.
     const typed = path.join(process.env.ZINNIA_E2E_WORK, "basic-replaced");
     fs.mkdirSync(typed, { recursive: true });
     await setInputValue("#basic-extract-path", typed);
+    const derivedFirst = path.join(path.dirname(first), "hello");
+    fs.rmSync(derivedFirst, { recursive: true, force: true });
     await queueDialogResult(first);
     await browser.execute(() => {
       document.getElementById("basic-extract-archive-info")?.click();
@@ -277,9 +279,13 @@ describe("Zinnia main window", () => {
       "hello.7z",
       "Basic extract header did not follow the second replacement",
     );
-    assert.equal(await domValue("#basic-extract-path"), typed);
+    assert.equal(
+      await domValue("#basic-extract-path"),
+      derivedFirst,
+      "a replacement must re-derive the typed destination for the new archive",
+    );
     await $("#basic-run-extract").click();
-    const extracted = path.join(typed, "hello.txt");
+    const extracted = path.join(derivedFirst, "hello.txt");
     await browser.waitUntil(() => fs.existsSync(extracted), {
       timeout: 60_000,
       timeoutMsg: `replaced archive did not extract to ${extracted}`,
@@ -373,7 +379,15 @@ describe("Zinnia main window", () => {
         timeoutMsg: "Basic output path stayed locked after compression",
       },
     );
-    assert.equal(await domText("#basic-compress-completion-path"), output);
+    const completionPath = await browser.execute(() => {
+      const el = document.getElementById("basic-compress-completion-path");
+      return { text: el?.textContent ?? "", title: el?.title ?? "" };
+    });
+    assert.equal(completionPath.title, output);
+    assert.ok(
+      completionPath.text.endsWith(path.basename(output)),
+      `completion path hid the file name: ${completionPath.text}`,
+    );
     fs.rmSync(input, { force: true });
   });
 

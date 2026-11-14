@@ -19,6 +19,7 @@ import { ensureArchivePaths, validateExtraArgs } from "../archive-rules";
 import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 import { confirmExtractDestination } from "../extract-destination";
+import { deriveBatchExtractDestinations } from "../extract-path";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
@@ -243,6 +244,51 @@ async function runSingleOperation(outputConfirmed: boolean) {
   }
 }
 
+const BATCH_NAME_LIST_LIMIT = 5;
+
+export function pluralArchives(count: number): string {
+  return `${count} archive${count === 1 ? "" : "s"}`;
+}
+
+export function formatBatchNameList(names: readonly string[]): string {
+  const shown = names.slice(0, BATCH_NAME_LIST_LIMIT).join(", ");
+  const hidden = names.length - BATCH_NAME_LIST_LIMIT;
+  return hidden > 0 ? `${shown}, and ${hidden} more` : shown;
+}
+
+type BatchOutcome = {
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  warningFailures: number;
+  failedNames: string[];
+  skippedNames: string[];
+};
+
+function batchOutcomeSummary(outcome: BatchOutcome): string {
+  const { succeeded, failed, skipped, warningFailures } = outcome;
+  const warningDetail = warningFailures
+    ? ` (${warningFailures} warning exit${warningFailures === 1 ? "" : "s"})`
+    : "";
+  const skippedDetail = skipped ? `, ${skipped} skipped` : "";
+  const counts =
+    failed > 0
+      ? `${succeeded} succeeded, ${failed} failed${warningDetail}${skippedDetail}.`
+      : `${succeeded} succeeded, ${skipped} skipped.`;
+  const parts = [counts];
+  if (outcome.failedNames.length > 0) {
+    parts.push(
+      `Failed ${pluralArchives(outcome.failedNames.length)}: ${formatBatchNameList(outcome.failedNames)}.`,
+    );
+  }
+  if (outcome.skippedNames.length > 0) {
+    parts.push(
+      `Skipped ${pluralArchives(outcome.skippedNames.length)}: ${formatBatchNameList(outcome.skippedNames)}.`,
+    );
+  }
+  return parts.join(" ");
+}
+
 export async function runBatchExtract() {
   if (state.running) return;
   state.batchCancelled = false;
@@ -275,6 +321,7 @@ export async function runBatchExtract() {
       setStatus("Cancelled", 2000);
       return;
     }
+    const outputDirs = deriveBatchExtractDestinations(dest, archives);
     const password = $<HTMLInputElement>("extract-password").value;
     const extraArgs = splitArgs(
       $<HTMLInputElement>("extract-extra-args").value.trim(),
@@ -297,6 +344,8 @@ export async function runBatchExtract() {
     let failed = 0;
     let skipped = 0;
     let warningFailures = 0;
+    const failedNames: string[] = [];
+    const skippedNames: string[] = [];
     let current = 0;
     let archiveStartedAt = Date.now();
     let sawPercent = false;
@@ -340,7 +389,7 @@ export async function runBatchExtract() {
       try {
         const args = [
           "x",
-          `-o${dest}`,
+          `-o${outputDirs[i]}`,
           SAFE_EXTRACT_OVERWRITE_MODE,
           "-bb1",
           "-bsp1",
@@ -367,6 +416,7 @@ export async function runBatchExtract() {
 
         if (result.skipped) {
           skipped++;
+          skippedNames.push(basename(archive));
           continue;
         }
 
@@ -379,6 +429,7 @@ export async function runBatchExtract() {
           succeeded++;
         } else {
           failed++;
+          failedNames.push(basename(archive));
           if (result.code === 1) {
             warningFailures++;
             log(
@@ -397,6 +448,7 @@ export async function runBatchExtract() {
       } catch (err) {
         if (state.batchCancelled || state.cancelRequested) break;
         failed++;
+        failedNames.push(basename(archive));
         const msg = err instanceof Error ? err.message : String(err);
         log(`Error extracting ${archive}: ${msg}`, "error");
         if (isDebugEnabled()) {
@@ -423,17 +475,29 @@ export async function runBatchExtract() {
         );
       }
     } else if (failed === 0) {
-      const summary = `${succeeded} succeeded, ${skipped} skipped.`;
+      const summary = batchOutcomeSummary({
+        succeeded,
+        failed,
+        skipped,
+        warningFailures,
+        failedNames,
+        skippedNames,
+      });
+      log(summary);
       setStatus("Done", 4000, summary);
       if (!basic) {
         showToast(summary, "success", 7000);
       }
     } else {
-      const warningDetail = warningFailures
-        ? ` (${warningFailures} warning exit${warningFailures === 1 ? "" : "s"})`
-        : "";
-      const skippedDetail = skipped ? `, ${skipped} skipped` : "";
-      const summary = `${succeeded} succeeded, ${failed} failed${warningDetail}${skippedDetail}.`;
+      const summary = batchOutcomeSummary({
+        succeeded,
+        failed,
+        skipped,
+        warningFailures,
+        failedNames,
+        skippedNames,
+      });
+      log(summary, "error");
       setStatus("Error", 4000, summary);
       if (!basic) {
         showToast(summary, "error", 7000);
@@ -478,7 +542,7 @@ export async function cancelAction() {
   // password-retry / batch loops running.
   state.batchCancelled = true;
   state.cancelRequested = true;
-  setStatus("Cancelling...");
+  setStatus("Cancelling…");
   try {
     const armed = await invoke<boolean>("cancel_7z");
     if (armed) {

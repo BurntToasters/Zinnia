@@ -13,6 +13,7 @@ import { state } from "./state";
 import { debugLog, isDebugEnabled } from "./debug-mode";
 import { showToast } from "./toast";
 import { compareVersions } from "./version-compare";
+import { onWorkspaceModeChange } from "./ui/workspace";
 
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
@@ -32,6 +33,35 @@ const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 const UPDATE_DOWNLOAD_STALL_TIMEOUT_MS = 120_000;
 const UPDATE_INSTALL_WATCHDOG_MS = 180_000;
 const UPDATE_RESERVATION_HEARTBEAT_MS = 60_000;
+const STATUS_UPDATE_INDICATOR_ID = "update-ready-indicator";
+const BASIC_UPDATE_INDICATOR_ID = "basic-update-indicator";
+let indicatorVersion: string | null = null;
+
+type UpdateStage = "check" | "download" | "install";
+
+class UpdateStageError extends Error {
+  readonly stage: "download" | "install";
+
+  constructor(stage: "download" | "install", cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "UpdateStageError";
+    this.stage = stage;
+  }
+}
+
+function failureStage(err: unknown, fallback: UpdateStage): UpdateStage {
+  return err instanceof UpdateStageError ? err.stage : fallback;
+}
+
+function failureLabel(stage: UpdateStage): string {
+  if (stage === "download") return "Update download failed.";
+  if (stage === "install") return "Update install failed.";
+  return "Failed to check for updates.";
+}
+
+function isBasicWorkspaceActive(): boolean {
+  return document.getElementById("app")?.dataset.workspaceMode !== "power";
+}
 
 async function touchUpdateReservation(): Promise<void> {
   try {
@@ -42,22 +72,42 @@ async function touchUpdateReservation(): Promise<void> {
   }
 }
 
-/** Persistent status-bar button. Status text alone is overwritten too easily. */
+/**
+ * Persistent status-bar button. Status text alone is overwritten too easily.
+ * The Basic header copy mirrors it, but only while Basic is the workspace.
+ */
 function renderUpdateReadyIndicator(
   version: string | null,
   downloaded: boolean,
 ): void {
-  const indicator = document.getElementById("update-ready-indicator");
-  if (!indicator) return;
-  indicator.hidden = version === null;
-  if (version === null) {
-    indicator.textContent = "";
-    return;
+  indicatorVersion = version;
+  const text =
+    version === null
+      ? ""
+      : downloaded
+        ? `Update ${version} ready. Restart to install`
+        : `Update ${version} available. Click to install`;
+  const status = document.getElementById(STATUS_UPDATE_INDICATOR_ID);
+  if (status) {
+    status.hidden = version === null;
+    status.textContent = text;
+    status.title = text;
   }
-  indicator.textContent = downloaded
-    ? `Update ${version} ready. Restart to install`
-    : `Update ${version} available. Click to install`;
+  const basic = document.getElementById(BASIC_UPDATE_INDICATOR_ID);
+  if (basic) {
+    basic.hidden = version === null || !isBasicWorkspaceActive();
+    basic.textContent = text;
+    basic.title = text;
+  }
 }
+
+function refreshBasicUpdateIndicatorVisibility(): void {
+  const basic = document.getElementById(BASIC_UPDATE_INDICATOR_ID);
+  if (!basic) return;
+  basic.hidden = indicatorVersion === null || !isBasicWorkspaceActive();
+}
+
+onWorkspaceModeChange(refreshBasicUpdateIndicatorVisibility);
 
 /** Status after a failed entry point. A parked update is still on offer. */
 function statusAfterFailure(): string {
@@ -196,6 +246,10 @@ async function promptInstallAndRestart(
   promptInFlight = true;
   try {
     await runInstallPrompt(version, update, generation);
+  } catch (err) {
+    throw err instanceof UpdateStageError
+      ? err
+      : new UpdateStageError("install", err);
   } finally {
     promptInFlight = false;
   }
@@ -255,9 +309,7 @@ async function runInstallPrompt(
     }
     setStatus("Installing update");
     installInFlight = true;
-    let watchdogFired = false;
     const watchdog = setTimeout(() => {
-      watchdogFired = true;
       // Native install (pkexec / AppleScript auth) cannot be cancelled. Keep the
       // archive-operation reservation and only surface a still-installing state.
       setStatus("Still installing update");
@@ -281,10 +333,7 @@ async function runInstallPrompt(
         } catch {
           // Already logged; still surface the install failure.
         }
-        if (watchdogFired) {
-          setStatus("Idle");
-        }
-        throw error;
+        throw new UpdateStageError("install", error);
       }
       // The new version is on disk from here on, so no failure below is an install failure.
       clearPendingUpdate(false);
@@ -373,7 +422,7 @@ async function downloadParkedUpdate(
     if (generation !== updateGeneration) {
       await update.close().catch(() => {});
     }
-    throw error;
+    throw new UpdateStageError("download", error);
   } finally {
     pendingDownloadInFlight = false;
   }
@@ -406,17 +455,22 @@ async function installPendingUpdateFromIndicator(): Promise<void> {
     await installParkedUpdate();
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
+    const stage = failureStage(err, "install");
     log(`Updater error: ${messageText}`, "error");
-    setStatus(statusAfterFailure());
-    showToast(`Failed to install update. ${messageText}`, "error", 0);
+    setStatus(failureStatusText(stage));
+    showToast(`${failureLabel(stage)} ${messageText}`, "error", 0);
   }
 }
 
-document
-  .getElementById("update-ready-indicator")
-  ?.addEventListener("click", () => {
+function failureStatusText(stage: UpdateStage): string {
+  return stage === "check" ? statusAfterFailure() : failureLabel(stage);
+}
+
+for (const id of [STATUS_UPDATE_INDICATOR_ID, BASIC_UPDATE_INDICATOR_ID]) {
+  document.getElementById(id)?.addEventListener("click", () => {
     void installPendingUpdateFromIndicator();
   });
+}
 
 async function runUpdateCheck(interactive: boolean): Promise<void> {
   let checkedUpdate: Update | null = null;
@@ -507,9 +561,13 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       return;
     }
     setStatus("Downloading update");
-    await candidate.download(undefined, {
-      timeout: UPDATE_DOWNLOAD_STALL_TIMEOUT_MS,
-    });
+    try {
+      await candidate.download(undefined, {
+        timeout: UPDATE_DOWNLOAD_STALL_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw new UpdateStageError("download", error);
+    }
     if (generation !== updateGeneration) {
       await candidate.close().catch(() => {});
       return;
@@ -523,13 +581,14 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       await checkedUpdate.close().catch(() => {});
     }
     const messageText = err instanceof Error ? err.message : String(err);
+    const stage = failureStage(err, "check");
     log(
       `${interactive ? "Updater error" : "Update check failed"}: ${messageText}`,
     );
     if (isDebugEnabled()) debugLog(`Update check failed: ${messageText}`);
-    setStatus(statusAfterFailure());
+    setStatus(failureStatusText(stage));
     if (interactive) {
-      showToast(`Failed to check for updates. ${messageText}`, "error", 0);
+      showToast(`${failureLabel(stage)} ${messageText}`, "error", 0);
     }
   }
 }

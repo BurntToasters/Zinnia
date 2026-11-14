@@ -59,14 +59,14 @@ describe("audit copy: terminology, settings wording, trigger and density semanti
     assert.equal(labels.quickExtractSelective, "Extract selected");
     assert.equal(labels.quickBrowseSelective, "Extract selected");
     assert.equal(labels.quickBrowseList, "List contents");
-    assert.equal(labels.browseSelective, "Extract selected...");
+    assert.equal(labels.browseSelective, "Extract selected…");
     assert.equal(labels.selectiveTitle, "Extract selected");
     assert.equal(labels.selectiveConfirm, "Extract selected");
     assert.equal(labels.selectiveDestLabel, "Destination folder");
     assert.equal(labels.powerOutputLabel, "Output archive");
     assert.equal(labels.powerExtractLabel, "Destination folder");
     assert.equal(labels.basicOutputLabel, "Output archive");
-    assert.equal(labels.basicChooseOutput, "Choose location");
+    assert.equal(labels.basicChooseOutput, "Choose…");
     assert.equal(labels.basicExtractLabel, "Destination folder");
     assert.match(
       labels.localLoggingTitle ?? "",

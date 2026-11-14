@@ -41,6 +41,21 @@ async function invokeExtractRun(
   }
 }
 
+async function invokeExtractRunForPassword(
+  args: Run7zRequest,
+  includeIoDiagnostics: boolean,
+): Promise<Run7zResult> {
+  try {
+    return await invokeExtractRun(args, includeIoDiagnostics);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // Header encryption can make backend safety listing request a password
+    // before extraction returns a normal Run7zResult.
+    if (!looksLikePasswordRequiredError("", detail)) throw error;
+    return { stdout: "", stderr: detail, code: 255 };
+  }
+}
+
 export async function runWithPasswordRetry(
   args: string[],
   shouldAbort: () => boolean,
@@ -52,16 +67,10 @@ export async function runWithPasswordRetry(
     args,
     ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
   };
-  let result: Run7zResult;
-  try {
-    result = await invokeExtractRun(invokeArgs, includeIoDiagnostics);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    // Header encryption can make backend safety listing request a password
-    // before extraction returns a normal Run7zResult.
-    if (!looksLikePasswordRequiredError("", detail)) throw error;
-    result = { stdout: "", stderr: detail, code: 255 };
-  }
+  let result = await invokeExtractRunForPassword(
+    invokeArgs,
+    includeIoDiagnostics,
+  );
   // A password that was already sent is known to be wrong when 7-Zip asks again.
   let passwordSent = false;
   while (
@@ -89,7 +98,7 @@ export async function runWithPasswordRetry(
       throw new Error(EXTRACT_PASSWORD_PROMPT_CANCELLED);
     }
     startIndeterminateProgress();
-    result = await invokeExtractRun(
+    result = await invokeExtractRunForPassword(
       {
         args: withPassword(args, outcome.value),
         ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),

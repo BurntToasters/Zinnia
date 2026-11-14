@@ -11,7 +11,7 @@ use tauri::Manager;
 use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
 use tauri_plugin_shell::ShellExt;
 
-use crate::output::{append_limited_output, Utf8StreamDecoder};
+use crate::output::{append_limited_output, ListingLineFilter, Utf8StreamDecoder};
 
 use super::super::ArchiveIoDiagnostics;
 use super::argv::{prepare_managed_listfile, ManagedListFile};
@@ -675,6 +675,18 @@ impl CollectedOutput {
 pub(crate) async fn collect_command_output<F>(
     rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
     max_bytes: usize,
+    on_stdout_line: F,
+) -> CollectedOutput
+where
+    F: FnMut(&str),
+{
+    collect_command_output_filtered(rx, max_bytes, None, on_stdout_line).await
+}
+
+pub(crate) async fn collect_command_output_filtered<F>(
+    rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
+    max_bytes: usize,
+    mut stdout_filter: Option<ListingLineFilter>,
     mut on_stdout_line: F,
 ) -> CollectedOutput
 where
@@ -696,12 +708,11 @@ where
             CommandEvent::Stdout(line) => {
                 let chunk = stdout_decoder.push(&line);
                 on_stdout_line(&chunk);
-                append_limited_output(
-                    &mut out.stdout,
-                    &chunk,
-                    max_bytes,
-                    &mut out.stdout_truncated,
-                );
+                let kept = match stdout_filter.as_mut() {
+                    Some(filter) => filter.push(&chunk),
+                    None => chunk,
+                };
+                append_limited_output(&mut out.stdout, &kept, max_bytes, &mut out.stdout_truncated);
             }
             CommandEvent::Stderr(line) => {
                 let chunk = stderr_decoder.push(&line);
@@ -716,9 +727,19 @@ where
                 let stdout_tail = stdout_decoder.finish();
                 if !stdout_tail.is_empty() {
                     on_stdout_line(&stdout_tail);
+                }
+                let kept_tail = match stdout_filter.as_mut() {
+                    Some(filter) => {
+                        let mut kept = filter.push(&stdout_tail);
+                        kept.push_str(&filter.finish());
+                        kept
+                    }
+                    None => stdout_tail,
+                };
+                if !kept_tail.is_empty() {
                     append_limited_output(
                         &mut out.stdout,
-                        &stdout_tail,
+                        &kept_tail,
                         max_bytes,
                         &mut out.stdout_truncated,
                     );
@@ -823,5 +844,68 @@ mod stream_record_tests {
             seen.iter().any(|record| record.contains("0%")),
             "progress before the backspace refresh waited for EOF: {seen:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod listing_filter_collect_tests {
+    use super::*;
+    use tauri_plugin_shell::process::TerminatedPayload;
+
+    fn stdout(text: &str) -> CommandEvent {
+        CommandEvent::Stdout(text.as_bytes().to_vec())
+    }
+
+    fn terminated() -> CommandEvent {
+        CommandEvent::Terminated(TerminatedPayload {
+            code: Some(0),
+            signal: None,
+        })
+    }
+
+    #[test]
+    fn collect_filtered_listing_applies_filter_before_byte_cap() {
+        tauri::async_runtime::block_on(async {
+            let (tx, mut rx) = tauri::async_runtime::channel::<CommandEvent>(64);
+            for line in [
+                "----------\n",
+                "Path = a\n",
+                "CRC = 0123456789ABCDEF\n",
+                "Size = 1\n",
+                "CRC = 5",
+            ] {
+                tx.send(stdout(line)).await.expect("send stdout");
+            }
+            tx.send(terminated()).await.expect("send exit");
+            drop(tx);
+
+            let seen_raw = std::cell::RefCell::new(String::new());
+            let collected = collect_command_output_filtered(
+                &mut rx,
+                40,
+                ListingLineFilter::for_listing_args(
+                    &["l", "-slt", "--", "a.zip"].map(str::to_string),
+                ),
+                |chunk| seen_raw.borrow_mut().push_str(chunk),
+            )
+            .await;
+
+            assert!(!collected.stdout_truncated, "filtered lines must not count");
+            assert_eq!(collected.stdout, "----------\nPath = a\nSize = 1\n");
+            assert!(seen_raw.borrow().contains("CRC = 0123456789ABCDEF"));
+            assert!(seen_raw.borrow().contains("CRC = 5"));
+        });
+    }
+
+    #[test]
+    fn collect_filtered_listing_without_filter_keeps_every_line() {
+        tauri::async_runtime::block_on(async {
+            let (tx, mut rx) = tauri::async_runtime::channel::<CommandEvent>(8);
+            tx.send(stdout("CRC = 1\n")).await.expect("send stdout");
+            tx.send(terminated()).await.expect("send exit");
+            drop(tx);
+            let collected = collect_command_output_filtered(&mut rx, 1024, None, |_| {}).await;
+            assert_eq!(collected.stdout, "CRC = 1\n");
+        });
     }
 }

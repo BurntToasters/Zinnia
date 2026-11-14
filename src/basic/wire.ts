@@ -1,5 +1,6 @@
 import { open, type DialogFilter } from "@tauri-apps/plugin-dialog";
 import { $, isImeComposing } from "../utils";
+import { MAX_ARCHIVE_PATHS } from "../archive-rules";
 import { state } from "../state";
 import {
   setMode,
@@ -20,7 +21,6 @@ import {
   ARCHIVE_NAME_SEPARATOR_MESSAGE,
   archiveNameHasSeparator,
   outputPathForArchiveName,
-  outputPathForFormatChange,
 } from "../extract-path";
 import {
   setBasicView,
@@ -30,8 +30,12 @@ import {
   setBasicBrowsePasswordVisible,
   renderBasicInputs,
   refreshBasicArchiveInfo,
-  syncBasicExtractToPower,
   syncPowerToBasicExtract,
+  syncBasicPasswordToPower,
+  revealBasicBrowsePasswordIfNeeded,
+  chooseBasicOutputPath,
+  renderBasicDestinations,
+  syncBasicOutputForFormat,
 } from "./sync";
 import {
   hideBasicCompletion,
@@ -170,7 +174,7 @@ export function initBasicWorkspace(): void {
         const overLimit = replaceBasicInputs(paths);
         if (overLimit > 0) {
           showToast(
-            `Selected the first 4,096 items; ${overLimit} more were not added.`,
+            `Selected the first ${MAX_ARCHIVE_PATHS.toLocaleString()} items; ${overLimit} more ${overLimit === 1 ? "item was" : "items were"} not added.`,
             "error",
             5000,
           );
@@ -210,9 +214,6 @@ export function initBasicWorkspace(): void {
       }
       const path = typeof selection === "string" ? selection : selection[0];
       if (path) {
-        // Hand the visible destination to Power first so its autofill keeps a
-        // typed choice and replaces only the previous archive's default.
-        syncBasicExtractToPower();
         state.inputs = [path];
         renderInputs();
         syncPowerToBasicExtract();
@@ -308,8 +309,14 @@ export function initBasicWorkspace(): void {
       renderBasicInputs();
       refreshBasicArchiveInfo();
     },
-    onSetRunning: (active) => updateBasicRunningState(active),
-    onSetStatus: (text, errorDetail) => updateBasicStatus(text, errorDetail),
+    onSetRunning: (active) => {
+      updateBasicRunningState(active);
+      renderBasicDestinations();
+    },
+    onSetStatus: (text, errorDetail) => {
+      updateBasicStatus(text, errorDetail);
+      revealBasicBrowsePasswordIfNeeded();
+    },
   });
   void refreshRecentArchives();
 }
@@ -326,27 +333,25 @@ async function activateBasicAddFiles(): Promise<void> {
   }
 }
 
-/** Keep the Basic output path's folder and set its extension for `format`. */
-function syncBasicOutputForFormat(format: string): void {
+async function changeBasicSaveLocation(): Promise<void> {
+  const preparation = beginBasicPreparation();
+  if (!preparation) return;
   const basicOutput = document.getElementById(
     "basic-output-path",
   ) as HTMLInputElement | null;
-  const basicName = document.getElementById(
-    "basic-archive-name",
-  ) as HTMLInputElement | null;
-  if (!basicOutput) return;
-  const current = basicOutput.value;
-  const next = outputPathForFormatChange(
-    current,
-    state.lastAutoOutputPath,
-    format,
-    basicName?.value ?? "",
-    (customName) => deriveOutputArchivePath(state.inputs, format, customName),
-  );
-  if (!next || next === current) return;
-  const wasAutofilled = !current || current === state.lastAutoOutputPath;
-  basicOutput.value = next;
-  if (wasAutofilled) state.lastAutoOutputPath = next;
+  const before = basicOutput?.value ?? "";
+  let accepted = false;
+  try {
+    syncBasicToPower();
+    await chooseOutputIfCurrent(() => isBasicPreparationCurrent(preparation));
+    accepted = isBasicPreparationCurrent(preparation);
+  } finally {
+    finishBasicPreparation(preparation);
+  }
+  if (!accepted) return;
+  const outputVal = $<HTMLInputElement>("output-path").value;
+  if (outputVal && outputVal !== before) chooseBasicOutputPath(outputVal);
+  renderBasicDestinations();
 }
 
 export function wireBasicCompressEvents(): void {
@@ -406,25 +411,16 @@ export function wireBasicCompressEvents(): void {
 
   const chooseOutputBtn = document.getElementById("basic-choose-output");
   if (chooseOutputBtn) {
-    chooseOutputBtn.addEventListener("click", async () => {
-      const preparation = beginBasicPreparation();
-      if (!preparation) return;
-      let accepted = false;
-      try {
-        syncBasicToPower();
-        await chooseOutputIfCurrent(() =>
-          isBasicPreparationCurrent(preparation),
-        );
-        accepted = isBasicPreparationCurrent(preparation);
-      } finally {
-        finishBasicPreparation(preparation);
-      }
-      if (!accepted) return;
-      const outputVal = $<HTMLInputElement>("output-path").value;
-      const basicOutput = document.getElementById(
-        "basic-output-path",
-      ) as HTMLInputElement | null;
-      if (basicOutput && outputVal) basicOutput.value = outputVal;
+    chooseOutputBtn.addEventListener("click", () => {
+      void changeBasicSaveLocation();
+    });
+  }
+  const changeSaveLocationBtn = document.getElementById(
+    "basic-change-save-location",
+  );
+  if (changeSaveLocationBtn) {
+    changeSaveLocationBtn.addEventListener("click", () => {
+      void changeBasicSaveLocation();
     });
   }
 
@@ -484,16 +480,25 @@ export function wireBasicCompressEvents(): void {
     });
   }
 
+  const basicPasswordInput = document.getElementById(
+    "basic-password",
+  ) as HTMLInputElement | null;
+  if (basicPasswordInput) {
+    basicPasswordInput.addEventListener("input", () => {
+      syncBasicPasswordToPower();
+    });
+  }
+
   const outputPathInput = document.getElementById(
     "basic-output-path",
   ) as HTMLInputElement | null;
   if (outputPathInput) {
-    // Basic is not re-read when the user switches to Power, and switching back
-    // to Basic overwrites these fields from Power. Mirror what the user types
-    // so the destination survives the round trip. Autofill and programmatic
-    // writes do not fire `input`, so they keep their existing handling.
+    // Mirror what the user types so Power sees the same destination after a
+    // round trip. Autofill and programmatic writes do not fire `input`, so they
+    // keep their existing handling.
     outputPathInput.addEventListener("input", () => {
       $<HTMLInputElement>("output-path").value = outputPathInput.value;
+      renderBasicDestinations();
     });
   }
 

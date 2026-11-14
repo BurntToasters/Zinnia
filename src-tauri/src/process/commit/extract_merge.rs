@@ -8,7 +8,7 @@ use super::super::journal::{
     record_archive_journal_published, remove_directory_if_matches, remove_regular_file_if_matches,
     sync_directory, unregister_plan_stages, unregister_plan_stages_strict, update_archive_journal,
     FileIdentity, MoveRecord, MAX_MOVE_IDENTITY_LOG_BYTES, MAX_MOVE_IDENTITY_RECORD_BYTES,
-    MAX_MOVE_PLAN_BYTES,
+    MAX_MOVE_PLAN_BYTES, MOVE_IDENTITY_BATCH_RECORDS,
 };
 use super::super::quota::MAX_EXTRACT_ENTRIES;
 use super::super::staging::assert_real_directory;
@@ -177,28 +177,39 @@ impl MoveIdentityLogWriter {
     }
 
     fn append(&mut self, record: &MoveIdentityLogRecord) -> Result<FileIdentity, String> {
+        self.append_batch(std::slice::from_ref(record))
+    }
+
+    fn append_batch(&mut self, records: &[MoveIdentityLogRecord]) -> Result<FileIdentity, String> {
         use sha2::Digest as _;
         use std::io::Write as _;
 
-        let mut json = serde_json::to_vec(record).map_err(|error| error.to_string())?;
-        if json.len() > MAX_MOVE_IDENTITY_RECORD_BYTES {
-            return Err(
-                "Extraction identity log record exceeds its byte safety limit.".to_string(),
-            );
+        if records.is_empty() || records.len() > MOVE_IDENTITY_BATCH_RECORDS {
+            return Err("Extraction identity log batch has an invalid record count.".to_string());
         }
-        json.push(b'\n');
-        let next_bytes = self.bytes_written.saturating_add(json.len() as u64);
-        let next_records = self.records_written.saturating_add(1);
+        let mut bytes = Vec::new();
+        for record in records {
+            let mut json = serde_json::to_vec(record).map_err(|error| error.to_string())?;
+            if json.len() > MAX_MOVE_IDENTITY_RECORD_BYTES {
+                return Err(
+                    "Extraction identity log record exceeds its byte safety limit.".to_string(),
+                );
+            }
+            json.push(b'\n');
+            bytes.extend_from_slice(&json);
+        }
+        let next_bytes = self.bytes_written.saturating_add(bytes.len() as u64);
+        let next_records = self.records_written.saturating_add(records.len() as u64);
         if next_bytes > MAX_MOVE_IDENTITY_LOG_BYTES
             || next_records > MAX_EXTRACT_ENTRIES.saturating_mul(2)
         {
             return Err("Extraction identity log exceeds its safety limit.".to_string());
         }
         self.file
-            .write_all(&json)
+            .write_all(&bytes)
             .map_err(|error| error.to_string())?;
         sync_file_best_effort(&self.file)?;
-        self.hasher.update(&json);
+        self.hasher.update(&bytes);
         self.bytes_written = next_bytes;
         self.records_written = next_records;
         let identity = self.current_identity();
@@ -270,9 +281,18 @@ fn hydrate_move_plan_identities(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MergeBatchEvent {
+    Journaled { len: usize },
+    Renamed { done: usize, len: usize },
+}
+
 trait ExtractArtifactRecorder {
     fn record_move_plan(&mut self, identity: &FileIdentity) -> Result<(), String>;
     fn record_move_identity_log(&mut self, identity: &FileIdentity) -> Result<(), String>;
+    fn observe_batch(&mut self, _event: MergeBatchEvent) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Journal a publish identity in the append-only log and mirror it into the
@@ -386,6 +406,138 @@ fn publish_target_local_copy<R: ExtractArtifactRecorder>(
     Ok(())
 }
 
+fn preflight_publish_target(
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    record: &MoveRecord,
+) -> Result<(), String> {
+    validate_move_record(staged, destination, record)?;
+    assert_safe_extract_target_ancestors(destination, &record.target)?;
+    if path_entry_exists(&record.target)? {
+        return Err(format!(
+            "Extraction destination changed during commit: {}",
+            record.target.display()
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_direct_publish(
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    record: &MoveRecord,
+) -> Result<(), String> {
+    preflight_publish_target(staged, destination, record)?;
+    let metadata = std::fs::symlink_metadata(&record.source).map_err(|e| e.to_string())?;
+    if !crate::path_safety::is_link_or_reparse(&metadata)
+        && !metadata.is_file()
+        && !metadata.is_dir()
+    {
+        return Err(format!(
+            "Extraction publish path is unsupported: {}",
+            record.source.display()
+        ));
+    }
+    Ok(())
+}
+
+fn direct_batch_end(plan: &[MoveRecord], start: usize) -> usize {
+    let mut end = start;
+    while end < plan.len()
+        && end - start < MOVE_IDENTITY_BATCH_RECORDS
+        && plan[end].publish_temp.is_none()
+    {
+        end += 1;
+    }
+    end
+}
+
+fn journal_direct_batch<R: ExtractArtifactRecorder>(
+    recorder: &mut R,
+    identity_log: &mut MoveIdentityLogWriter,
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    plan: &mut [MoveRecord],
+    range: std::ops::Range<usize>,
+) -> Result<(), String> {
+    let mut records = Vec::with_capacity(range.len());
+    let mut identities = Vec::with_capacity(range.len());
+    for index in range.clone() {
+        preflight_direct_publish(staged, destination, &plan[index])?;
+        let expected = path_identity_with_fingerprint(&plan[index].source)?;
+        records.push(MoveIdentityLogRecord {
+            index,
+            publish_temp: None,
+            identity: expected.clone(),
+        });
+        identities.push(expected);
+    }
+    let log_identity = identity_log.append_batch(&records)?;
+    recorder.record_move_identity_log(&log_identity)?;
+    recorder.observe_batch(MergeBatchEvent::Journaled { len: records.len() })?;
+    for (index, identity) in range.zip(identities) {
+        plan[index].publish_identity = Some(identity);
+    }
+    Ok(())
+}
+
+fn publish_direct_record<R: ExtractArtifactRecorder>(
+    recorder: &mut R,
+    identity_log: &mut MoveIdentityLogWriter,
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    plan: &mut [MoveRecord],
+    index: usize,
+) -> Result<(), String> {
+    preflight_direct_publish(staged, destination, &plan[index])?;
+    let source = plan[index].source.clone();
+    let target = plan[index].target.clone();
+    let expected = plan[index]
+        .publish_identity
+        .clone()
+        .ok_or_else(|| "Extraction publish identity was not journaled.".to_string())?;
+    rename_file_no_replace(&source, &target)?;
+    let actual = path_identity_with_fingerprint(&target)?;
+    if actual.fingerprint() != expected.fingerprint() {
+        return Err(format!(
+            "Extraction link changed during commit: {}",
+            target.display()
+        ));
+    }
+    if !file_identities_match(&actual, &expected) {
+        record_publish_identity(recorder, identity_log, plan, index, &actual)?;
+    }
+    // Direct directory renames preserve the private staging mode;
+    // normalize the published directory to its destination parent.
+    // The Unix helper re-opens the target without following links,
+    // and any failure still reaches the enclosing rollback path.
+    #[cfg(unix)]
+    if std::fs::symlink_metadata(&target)
+        .map_err(|error| error.to_string())?
+        .is_dir()
+    {
+        crate::fs_secure::apply_parent_directory_mode(&target).map_err(|error| {
+            format!(
+                "Could not apply destination parent mode to published directory {}: {error}",
+                target.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn rollback_after_publish_error(
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    plan: &[MoveRecord],
+    error: String,
+) -> String {
+    match rollback_move_records_impl(staged, destination, plan, true) {
+        Ok(()) => error,
+        Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
+    }
+}
+
 fn resolve_staged_symlink_target(
     staged: &std::path::Path,
     link: &std::path::Path,
@@ -396,13 +548,12 @@ fn resolve_staged_symlink_target(
 fn final_path_for_staged_source(
     staged: &std::path::Path,
     destination: &std::path::Path,
-    plan: &[MoveRecord],
+    records_by_source: &std::collections::HashMap<&std::path::Path, &MoveRecord>,
     source: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
-    let mapped = plan
-        .iter()
-        .filter(|record| source == record.source || source.starts_with(&record.source))
-        .max_by_key(|record| record.source.components().count());
+    let mapped = source
+        .ancestors()
+        .find_map(|ancestor| records_by_source.get(ancestor).copied());
     if let Some(record) = mapped {
         let suffix = source
             .strip_prefix(&record.source)
@@ -460,6 +611,10 @@ fn prepare_planned_links(
     // link can point through another staged link, so rewriting one while this
     // pass is still discovering targets would change the meaning of later
     // links in the plan.
+    let records_by_source: std::collections::HashMap<&std::path::Path, &MoveRecord> = plan
+        .iter()
+        .map(|record| (record.source.as_path(), record))
+        .collect();
     let mut rewrites = Vec::new();
     for record in plan {
         let mut pending = vec![record.source.clone()];
@@ -476,13 +631,18 @@ fn prepare_planned_links(
                         path.display()
                     ));
                 }
-                let final_target =
-                    final_path_for_staged_source(staged, destination, plan, &source_target)?;
+                let final_target = final_path_for_staged_source(
+                    staged,
+                    destination,
+                    &records_by_source,
+                    &source_target,
+                )?;
                 crate::path_safety::assert_path_resolves_within_root_or_missing(
                     destination,
                     &final_target,
                 )?;
-                let final_link = final_path_for_staged_source(staged, destination, plan, &path)?;
+                let final_link =
+                    final_path_for_staged_source(staged, destination, &records_by_source, &path)?;
                 let final_parent = final_link
                     .parent()
                     .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
@@ -1117,70 +1277,77 @@ where
     let mut identity_log = MoveIdentityLogWriter::create(staged)?;
     let mut move_identity_log_identity = identity_log.current_identity();
     recorder.record_move_identity_log(&move_identity_log_identity)?;
-    for index in 0..plan.len() {
-        let mut publish_one = || -> Result<(), String> {
-            validate_move_record(staged, destination, &plan[index])?;
-            let source = plan[index].source.clone();
-            let target = plan[index].target.clone();
-            assert_safe_extract_target_ancestors(destination, &target)?;
-            if path_entry_exists(&target)? {
-                return Err(format!(
-                    "Extraction destination changed during commit: {}",
-                    target.display()
+    let mut index = 0;
+    while index < plan.len() {
+        if plan[index].publish_temp.is_some() {
+            let published =
+                preflight_publish_target(staged, destination, &plan[index]).and_then(|()| {
+                    publish_target_local_copy(recorder, &mut identity_log, &mut plan, index)
+                });
+            if let Err(error) = published {
+                return Err(rollback_after_publish_error(
+                    staged,
+                    destination,
+                    &plan,
+                    error,
                 ));
             }
-            if plan[index].publish_temp.is_some() {
-                return publish_target_local_copy(recorder, &mut identity_log, &mut plan, index);
+            #[cfg(feature = "e2e")]
+            if index == 0 {
+                crate::process::e2e_crash::crash_point("mid-promotion");
             }
-            let metadata = std::fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
-            if !crate::path_safety::is_link_or_reparse(&metadata)
-                && !metadata.is_file()
-                && !metadata.is_dir()
-            {
-                return Err(format!(
-                    "Extraction publish path is unsupported: {}",
-                    source.display()
-                ));
-            }
-            let expected = path_identity_with_fingerprint(&source)?;
-            record_publish_identity(recorder, &mut identity_log, &mut plan, index, &expected)?;
-            rename_file_no_replace(&source, &target)?;
-            let actual = path_identity_with_fingerprint(&plan[index].target)?;
-            if actual.fingerprint() != expected.fingerprint() {
-                return Err(format!(
-                    "Extraction link changed during commit: {}",
-                    plan[index].target.display()
-                ));
-            }
-            if !file_identities_match(&actual, &expected) {
-                record_publish_identity(recorder, &mut identity_log, &mut plan, index, &actual)?;
-            }
-            // Direct directory renames preserve the private staging mode;
-            // normalize the published directory to its destination parent.
-            // The Unix helper re-opens the target without following links,
-            // and any failure still reaches the enclosing rollback path.
-            #[cfg(unix)]
-            if metadata.is_dir() {
-                crate::fs_secure::apply_parent_directory_mode(&target).map_err(|error| {
-                    format!(
-                        "Could not apply destination parent mode to published directory {}: {error}",
-                        target.display()
-                    )
-                })?;
-            }
-            Ok(())
-        };
-        if let Err(error) = publish_one() {
-            let rollback = rollback_move_records_impl(staged, destination, &plan, true);
-            return Err(match rollback {
-                Ok(()) => error,
-                Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
+            index += 1;
+            continue;
+        }
+        let end = direct_batch_end(&plan, index);
+        if let Err(error) = journal_direct_batch(
+            recorder,
+            &mut identity_log,
+            staged,
+            destination,
+            &mut plan,
+            index..end,
+        ) {
+            return Err(rollback_after_publish_error(
+                staged,
+                destination,
+                &plan,
+                error,
+            ));
+        }
+        for batch_index in index..end {
+            let published = publish_direct_record(
+                recorder,
+                &mut identity_log,
+                staged,
+                destination,
+                &mut plan,
+                batch_index,
+            )
+            .and_then(|()| {
+                recorder.observe_batch(MergeBatchEvent::Renamed {
+                    done: batch_index - index + 1,
+                    len: end - index,
+                })
             });
+            if let Err(error) = published {
+                return Err(rollback_after_publish_error(
+                    staged,
+                    destination,
+                    &plan,
+                    error,
+                ));
+            }
+            #[cfg(feature = "e2e")]
+            if batch_index == 0 {
+                crate::process::e2e_crash::crash_point("mid-promotion");
+            }
+            #[cfg(feature = "e2e")]
+            if batch_index == index && end - index > 1 {
+                crate::process::e2e_crash::crash_point("mid-batch");
+            }
         }
-        #[cfg(feature = "e2e")]
-        if index == 0 {
-            crate::process::e2e_crash::crash_point("mid-promotion");
-        }
+        index = end;
     }
     move_identity_log_identity = match identity_log.seal().and_then(|identity| {
         recorder.record_move_identity_log(&identity)?;
@@ -1395,4 +1562,625 @@ pub(crate) fn commit_cleanup(
         unregister_plan_stages(plan);
     }
     Ok(publish_strategy)
+}
+
+#[cfg(test)]
+mod batch_merge_tests {
+    use super::*;
+    use crate::process::journal::ObjectFingerprint;
+    use sha2::Digest as _;
+
+    type Hook = Box<dyn FnMut(MergeBatchEvent) -> Result<(), String>>;
+
+    struct BatchRecorder {
+        log_path: std::path::PathBuf,
+        plan_identity: Option<FileIdentity>,
+        log_identities: Vec<FileIdentity>,
+        events: Vec<MergeBatchEvent>,
+        panic_on_log_call: Option<usize>,
+        hook: Hook,
+    }
+
+    impl BatchRecorder {
+        fn new(fixture: &Fixture, hook: Hook) -> Self {
+            Self {
+                log_path: move_identity_log_path(&fixture.staged),
+                plan_identity: None,
+                log_identities: Vec::new(),
+                events: Vec::new(),
+                panic_on_log_call: None,
+                hook,
+            }
+        }
+
+        fn journaled_log(&self) -> FileIdentity {
+            self.log_identities
+                .last()
+                .cloned()
+                .expect("a log identity was journaled")
+        }
+    }
+
+    impl ExtractArtifactRecorder for BatchRecorder {
+        fn record_move_plan(&mut self, identity: &FileIdentity) -> Result<(), String> {
+            self.plan_identity = Some(identity.clone());
+            Ok(())
+        }
+
+        fn record_move_identity_log(&mut self, identity: &FileIdentity) -> Result<(), String> {
+            if self.panic_on_log_call == Some(self.log_identities.len() + 1) {
+                panic!("injected crash before the batch journal update");
+            }
+            self.log_identities.push(identity.clone());
+            Ok(())
+        }
+
+        fn observe_batch(&mut self, event: MergeBatchEvent) -> Result<(), String> {
+            let journaled = self.journaled_log();
+            let Some(ObjectFingerprint::File { len, sha256 }) = journaled.fingerprint() else {
+                panic!("journaled log identity has no file fingerprint");
+            };
+            let bytes = std::fs::read(&self.log_path).expect("read identity log");
+            assert_eq!(
+                bytes.len() as u64,
+                *len,
+                "identity log length must equal the journaled fingerprint at {event:?}"
+            );
+            assert_eq!(
+                sha2::Sha256::digest(&bytes).as_slice(),
+                sha256,
+                "identity log contents must equal the journaled fingerprint at {event:?}"
+            );
+            self.events.push(event);
+            (self.hook)(event)
+        }
+    }
+
+    struct Fixture {
+        root: std::path::PathBuf,
+        staged: std::path::PathBuf,
+        destination: std::path::PathBuf,
+    }
+
+    impl Fixture {
+        fn remove(self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            crate::process::staging::random_token().expect("random test token")
+        ))
+    }
+
+    fn flat_fixture(prefix: &str, count: usize) -> Fixture {
+        let root = temp_root(prefix);
+        let destination = root.join("out");
+        let staged = destination.join(format!(".zinnia-extract-{}", "b".repeat(32)));
+        std::fs::create_dir_all(&staged).expect("stage");
+        std::fs::write(destination.join("keep.txt"), "keep-me\n").expect("keep file");
+        for index in 1..=count {
+            std::fs::write(
+                staged.join(format!("entry-{index:04}.txt")),
+                format!("entry {index}\n"),
+            )
+            .expect("staged entry");
+        }
+        Fixture {
+            root,
+            staged,
+            destination,
+        }
+    }
+
+    fn run_merge(fixture: &Fixture, recorder: &mut BatchRecorder) -> Result<(), String> {
+        let stage_identity = path_identity(&fixture.staged)?;
+        merge_staged_extract_recorded(
+            &fixture.staged,
+            &fixture.destination,
+            &stage_identity,
+            MAX_EXTRACTED_BYTES,
+            recorder,
+            || Ok(()),
+        )
+        .map(|_| ())
+    }
+
+    fn no_hook() -> Hook {
+        Box::new(|_| Ok(()))
+    }
+
+    fn read_plan(staged: &std::path::Path) -> Vec<MoveRecord> {
+        let bytes = std::fs::read(move_plan_path(staged)).expect("move plan");
+        serde_json::from_slice(&bytes).expect("parse move plan")
+    }
+
+    fn entry_names(directory: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(directory)
+            .expect("read directory")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .filter(|name| !name.starts_with(".zinnia-extract-"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn assert_original_stage(fixture: &Fixture, count: usize) {
+        for index in 1..=count {
+            let content =
+                std::fs::read_to_string(fixture.staged.join(format!("entry-{index:04}.txt")))
+                    .expect("staged entry restored");
+            assert_eq!(content, format!("entry {index}\n"));
+        }
+    }
+
+    fn probe_identity(root: &std::path::Path) -> FileIdentity {
+        let probe = root.join("probe.txt");
+        std::fs::write(&probe, "probe\n").expect("probe");
+        path_identity_with_fingerprint(&probe).expect("probe identity")
+    }
+
+    fn log_line(index: usize, identity: &FileIdentity) -> Vec<u8> {
+        let mut line = serde_json::to_vec(&MoveIdentityLogRecord {
+            index,
+            publish_temp: None,
+            identity: identity.clone(),
+        })
+        .expect("log record");
+        line.push(b'\n');
+        line
+    }
+
+    fn direct_record(root: &std::path::Path, index: usize) -> MoveRecord {
+        MoveRecord {
+            source: root.join(format!("source-{index}")),
+            target: root.join(format!("target-{index}")),
+            publish_temp: None,
+            publish_identity: None,
+        }
+    }
+
+    #[test]
+    fn merge_publishes_257_entries_in_two_batches() {
+        let fixture = flat_fixture("zinnia-batch-257", 257);
+        let mut recorder = BatchRecorder::new(&fixture, no_hook());
+        run_merge(&fixture, &mut recorder).expect("merge of 257 entries");
+
+        let journaled = recorder
+            .events
+            .iter()
+            .filter(|event| matches!(event, MergeBatchEvent::Journaled { .. }))
+            .count();
+        let renamed = recorder
+            .events
+            .iter()
+            .filter(|event| matches!(event, MergeBatchEvent::Renamed { .. }))
+            .count();
+        assert_eq!(journaled, 2, "257 entries are one full batch and one tail");
+        assert_eq!(renamed, 257);
+        assert_eq!(
+            recorder.log_identities.len(),
+            4,
+            "log creation, two batch journals and the seal"
+        );
+        assert!(recorder.plan_identity.is_some());
+        let mut expected: Vec<String> = (1..=257)
+            .map(|index| format!("entry-{index:04}.txt"))
+            .collect();
+        expected.push("keep.txt".to_string());
+        expected.sort();
+        assert_eq!(entry_names(&fixture.destination), expected);
+        for index in 1..=257 {
+            assert_eq!(
+                std::fs::read_to_string(fixture.destination.join(format!("entry-{index:04}.txt")))
+                    .expect("published entry"),
+                format!("entry {index}\n")
+            );
+        }
+        fixture.remove();
+    }
+
+    #[test]
+    fn batch_journal_is_durable_before_its_renames() {
+        let fixture = flat_fixture("zinnia-batch-durable", 3);
+        let mut recorder = BatchRecorder::new(&fixture, no_hook());
+        run_merge(&fixture, &mut recorder).expect("merge");
+        assert_eq!(
+            recorder.events,
+            vec![
+                MergeBatchEvent::Journaled { len: 3 },
+                MergeBatchEvent::Renamed { done: 1, len: 3 },
+                MergeBatchEvent::Renamed { done: 2, len: 3 },
+                MergeBatchEvent::Renamed { done: 3, len: 3 },
+            ]
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn batch_journal_failure_publishes_nothing() {
+        let fixture = flat_fixture("zinnia-batch-journal-fail", 3);
+        let hook: Hook = Box::new(|event| match event {
+            MergeBatchEvent::Journaled { .. } => Err("injected journal failure".to_string()),
+            MergeBatchEvent::Renamed { .. } => Ok(()),
+        });
+        let mut recorder = BatchRecorder::new(&fixture, hook);
+        let error = run_merge(&fixture, &mut recorder).expect_err("journal failure");
+        assert!(error.contains("injected journal failure"), "{error}");
+        assert_eq!(recorder.events, vec![MergeBatchEvent::Journaled { len: 3 }]);
+        assert_eq!(
+            entry_names(&fixture.destination),
+            vec!["keep.txt".to_string()]
+        );
+        assert_original_stage(&fixture, 3);
+        fixture.remove();
+    }
+
+    #[test]
+    fn batch_target_created_after_journal_is_refused() {
+        let fixture = flat_fixture("zinnia-batch-target-race", 4);
+        let staged = fixture.staged.clone();
+        let destination = fixture.destination.clone();
+        let planted_name = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let planted_for_hook = planted_name.clone();
+        let hook: Hook = Box::new(move |event| {
+            if let MergeBatchEvent::Journaled { .. } = event {
+                let plan = read_plan(&staged);
+                let last = plan.last().expect("plan has entries").target.clone();
+                std::fs::write(&last, "planted\n").map_err(|error| error.to_string())?;
+                *planted_for_hook.lock().expect("name lock") = last
+                    .file_name()
+                    .expect("target name")
+                    .to_string_lossy()
+                    .to_string();
+            }
+            Ok(())
+        });
+        let mut recorder = BatchRecorder::new(&fixture, hook);
+        let error = run_merge(&fixture, &mut recorder).expect_err("colliding target");
+        assert!(
+            error.contains("Extraction destination changed during commit"),
+            "{error}"
+        );
+        let planted = planted_name.lock().expect("name lock").clone();
+        assert_eq!(entry_names(&destination), {
+            let mut expected = vec!["keep.txt".to_string(), planted.clone()];
+            expected.sort();
+            expected
+        });
+        assert_eq!(
+            std::fs::read_to_string(destination.join(&planted)).expect("planted target"),
+            "planted\n"
+        );
+        assert_original_stage(&fixture, 4);
+        fixture.remove();
+    }
+
+    #[test]
+    fn batch_source_change_after_journal_is_refused() {
+        let fixture = flat_fixture("zinnia-batch-source-race", 3);
+        let staged = fixture.staged.clone();
+        let destination = fixture.destination.clone();
+        let rewritten_target = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let rewritten_for_hook = rewritten_target.clone();
+        let hook: Hook = Box::new(move |event| {
+            if let MergeBatchEvent::Journaled { .. } = event {
+                let plan = read_plan(&staged);
+                let first = plan.first().expect("plan has entries");
+                let original = std::fs::read(&first.source).expect("source bytes");
+                let mut changed = vec![b'X'; original.len() - 1];
+                changed.push(b'\n');
+                std::fs::write(&first.source, &changed).map_err(|error| error.to_string())?;
+                *rewritten_for_hook.lock().expect("target lock") =
+                    Some((first.target.clone(), changed));
+            }
+            Ok(())
+        });
+        let mut recorder = BatchRecorder::new(&fixture, hook);
+        let error = run_merge(&fixture, &mut recorder).expect_err("changed source");
+        assert!(
+            error.contains("Extraction link changed during commit"),
+            "{error}"
+        );
+        let (target, changed) = rewritten_target
+            .lock()
+            .expect("target lock")
+            .clone()
+            .expect("hook ran");
+        assert_eq!(
+            std::fs::read(&target).expect("preserved target"),
+            changed,
+            "a changed published object must be preserved"
+        );
+        assert!(destination.join("keep.txt").is_file());
+        fixture.remove();
+    }
+
+    #[test]
+    fn merge_crash_after_batch_journal_recovers_clean() {
+        let fixture = flat_fixture("zinnia-batch-crash-journal", 3);
+        let hook: Hook = Box::new(|event| {
+            if let MergeBatchEvent::Journaled { .. } = event {
+                panic!("injected crash after the batch journal update");
+            }
+            Ok(())
+        });
+        let mut recorder = BatchRecorder::new(&fixture, hook);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_merge(&fixture, &mut recorder)
+        }));
+        assert!(outcome.is_err(), "the injected crash must unwind");
+        let plan_identity = recorder.plan_identity.clone().expect("plan journaled");
+        let log_identity = recorder.journaled_log();
+        rollback_persisted_move_plan(
+            &fixture.staged,
+            &fixture.destination,
+            Some(&plan_identity),
+            Some(&log_identity),
+        )
+        .expect("recovery after a crash between the batch journal and the renames");
+        assert_original_stage(&fixture, 3);
+        assert_eq!(
+            entry_names(&fixture.destination),
+            vec!["keep.txt".to_string()]
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn merge_crash_before_batch_journal_recovers_from_unjournaled_tail() {
+        let fixture = flat_fixture("zinnia-batch-crash-tail", 3);
+        let mut recorder = BatchRecorder::new(&fixture, no_hook());
+        recorder.panic_on_log_call = Some(2);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_merge(&fixture, &mut recorder)
+        }));
+        assert!(outcome.is_err(), "the injected crash must unwind");
+        let plan_identity = recorder.plan_identity.clone().expect("plan journaled");
+        let log_identity = recorder.journaled_log();
+        rollback_persisted_move_plan(
+            &fixture.staged,
+            &fixture.destination,
+            Some(&plan_identity),
+            Some(&log_identity),
+        )
+        .expect("recovery accepts one batch of records appended but not journaled");
+        assert_original_stage(&fixture, 3);
+        assert_eq!(
+            entry_names(&fixture.destination),
+            vec!["keep.txt".to_string()]
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn merge_crash_mid_batch_recovers_clean() {
+        let fixture = flat_fixture("zinnia-batch-crash-mid", 3);
+        let hook: Hook = Box::new(|event| {
+            if let MergeBatchEvent::Renamed { done: 1, .. } = event {
+                panic!("injected crash between the first and second rename of a batch");
+            }
+            Ok(())
+        });
+        let mut recorder = BatchRecorder::new(&fixture, hook);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_merge(&fixture, &mut recorder)
+        }));
+        assert!(outcome.is_err(), "the injected crash must unwind");
+        assert!(
+            fixture.destination.join("entry-0001.txt").exists()
+                || fixture.destination.join("entry-0002.txt").exists()
+                || fixture.destination.join("entry-0003.txt").exists()
+        );
+        let plan_identity = recorder.plan_identity.clone().expect("plan journaled");
+        let log_identity = recorder.journaled_log();
+        rollback_persisted_move_plan(
+            &fixture.staged,
+            &fixture.destination,
+            Some(&plan_identity),
+            Some(&log_identity),
+        )
+        .expect("recovery after a crash in the middle of a batch");
+        assert_original_stage(&fixture, 3);
+        assert_eq!(
+            entry_names(&fixture.destination),
+            vec!["keep.txt".to_string()]
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn merge_mixes_target_local_and_batched_records() {
+        let root = temp_root("zinnia-batch-mixed");
+        let destination = root.join("out");
+        let staged = destination.join(format!(".zinnia-extract-{}", "c".repeat(32)));
+        std::fs::create_dir_all(destination.join("sub")).expect("existing sub");
+        std::fs::write(destination.join("sub").join("existing.txt"), "existing\n")
+            .expect("existing file");
+        std::fs::write(destination.join("keep.txt"), "keep-me\n").expect("keep");
+        std::fs::create_dir_all(staged.join("sub")).expect("staged sub");
+        std::fs::write(staged.join("sub").join("new.txt"), "new\n").expect("nested new");
+        std::fs::write(staged.join("a.txt"), "a\n").expect("a");
+        std::fs::write(staged.join("b.txt"), "b\n").expect("b");
+        let fixture = Fixture {
+            root,
+            staged,
+            destination,
+        };
+        let mut recorder = BatchRecorder::new(&fixture, no_hook());
+        run_merge(&fixture, &mut recorder).expect("mixed merge");
+        assert_eq!(
+            std::fs::read_to_string(fixture.destination.join("sub").join("new.txt"))
+                .expect("nested published"),
+            "new\n"
+        );
+        assert_eq!(
+            entry_names(&fixture.destination.join("sub")),
+            vec!["existing.txt".to_string(), "new.txt".to_string()]
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.destination.join("a.txt")).expect("a published"),
+            "a\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.destination.join("b.txt")).expect("b published"),
+            "b\n"
+        );
+        assert!(fixture.destination.join("keep.txt").is_file());
+        fixture.remove();
+    }
+
+    #[test]
+    fn identity_log_and_plan_accept_110k_entries() {
+        let root = temp_root("zinnia-batch-110k-caps");
+        let destination = root.join("out");
+        let staged = destination.join(format!(".zinnia-extract-{}", "d".repeat(32)));
+        std::fs::create_dir_all(&destination).expect("destination");
+        std::fs::write(destination.join("keep.txt"), "keep-me\n").expect("keep");
+        let identity =
+            path_identity_with_fingerprint(&destination.join("keep.txt")).expect("probe identity");
+        let count = 110_000usize;
+        let plan: Vec<MoveRecord> = (1..=count)
+            .map(|index| MoveRecord {
+                source: staged.join(format!("extract-{index:06}.txt")),
+                target: destination.join(format!("extract-{index:06}.txt")),
+                publish_temp: None,
+                publish_identity: None,
+            })
+            .collect();
+        write_move_plan(&staged, &plan).expect("110k move plan within its byte limit");
+        let mut log = MoveIdentityLogWriter::create(&staged).expect("identity log");
+        let indices: Vec<usize> = (0..count).collect();
+        for chunk in indices.chunks(MOVE_IDENTITY_BATCH_RECORDS) {
+            let records: Vec<MoveIdentityLogRecord> = chunk
+                .iter()
+                .map(|index| MoveIdentityLogRecord {
+                    index: *index,
+                    publish_temp: None,
+                    identity: identity.clone(),
+                })
+                .collect();
+            log.append_batch(&records)
+                .expect("110k identity records within the log byte limit");
+        }
+        assert_eq!(log.records_written, count as u64);
+        log.seal().expect("sealed 110k identity log");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hydrate_rejects_malformed_complete_batch_record() {
+        let root = temp_root("zinnia-batch-hydrate-bad");
+        std::fs::create_dir_all(&root).expect("root");
+        let identity = probe_identity(&root);
+        let mut plan = vec![direct_record(&root, 0), direct_record(&root, 1)];
+        let mut bytes = log_line(0, &identity);
+        bytes.extend_from_slice(b"not a record\n");
+        bytes.extend_from_slice(&log_line(1, &identity));
+        assert!(hydrate_move_plan_identities(Some(&bytes), &mut plan).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hydrate_ignores_only_torn_final_record() {
+        let root = temp_root("zinnia-batch-hydrate-torn");
+        std::fs::create_dir_all(&root).expect("root");
+        let identity = probe_identity(&root);
+        let mut plan = vec![
+            direct_record(&root, 0),
+            direct_record(&root, 1),
+            direct_record(&root, 2),
+        ];
+        let mut bytes = log_line(0, &identity);
+        bytes.extend_from_slice(&log_line(1, &identity));
+        bytes.extend_from_slice(b"{\"index\":2,\"iden");
+        hydrate_move_plan_identities(Some(&bytes), &mut plan).expect("torn tail ignored");
+        assert!(plan[0].publish_identity.is_some());
+        assert!(plan[1].publish_identity.is_some());
+        assert!(plan[2].publish_identity.is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    fn make_file_link(target: &str, link: &std::path::Path) -> Result<(), String> {
+        std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
+    }
+
+    #[cfg(windows)]
+    fn make_file_link(target: &str, link: &std::path::Path) -> Result<(), String> {
+        match std::os::windows::fs::symlink_file(target, link) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if std::env::var_os("ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS").is_some() {
+                    panic!("Windows symlink creation failed while ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS is set: {error}");
+                }
+                Err(error.to_string())
+            }
+        }
+    }
+
+    #[test]
+    fn prepare_planned_links_rewrites_many_links() {
+        let root = temp_root("zinnia-batch-links");
+        let destination = root.join("out");
+        let staged = destination.join(format!(".zinnia-extract-{}", "e".repeat(32)));
+        let count = 200usize;
+        std::fs::create_dir_all(destination.join("e")).expect("existing e");
+        std::fs::create_dir_all(staged.join("e")).expect("staged e");
+        std::fs::create_dir_all(staged.join("d")).expect("staged d");
+        for index in 0..count {
+            std::fs::write(
+                destination.join("e").join(format!("f{index}.txt")),
+                "occupied\n",
+            )
+            .expect("occupied");
+            std::fs::write(
+                staged.join("e").join(format!("f{index}.txt")),
+                format!("file {index}\n"),
+            )
+            .expect("staged file");
+        }
+        let mut links_made = 0usize;
+        for index in 0..count {
+            match make_file_link(
+                &format!("../e/f{index}.txt"),
+                &staged.join("d").join(format!("l{index}")),
+            ) {
+                Ok(()) => links_made += 1,
+                Err(error) => {
+                    eprintln!("skipping link test: {error}");
+                    let _ = std::fs::remove_dir_all(&root);
+                    return;
+                }
+            }
+        }
+        assert_eq!(links_made, count);
+        let fixture = Fixture {
+            root,
+            staged,
+            destination,
+        };
+        let mut recorder = BatchRecorder::new(&fixture, no_hook());
+        run_merge(&fixture, &mut recorder).expect("merge with many links");
+        for index in 0..count {
+            let link = fixture.destination.join("d").join(format!("l{index}"));
+            assert_eq!(
+                std::fs::read_link(&link).expect("rewritten link"),
+                std::path::PathBuf::from(format!("../e/f{index}_1.txt"))
+            );
+            assert_eq!(
+                std::fs::read_to_string(&link).expect("link content"),
+                format!("file {index}\n")
+            );
+        }
+        fixture.remove();
+    }
 }

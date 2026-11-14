@@ -10,7 +10,7 @@ describe("formatCommandOutputForLogs", () => {
     );
     expect(entries.length).toBe(2);
     expect(entries[0].text).toContain("stdout:");
-    expect(entries[0].text).toContain("line(s)");
+    expect(entries[0].text).toMatch(/\d+ lines?, /);
     expect(entries[0].text).toContain("Preview:");
     expect(entries[1].level).toBe("error");
   });

@@ -147,10 +147,11 @@ describe("Recent menu interaction", () => {
     saveRecentArchives(["/tmp/first.7z", "/tmp/second.zip"]);
     renderRecentArchives();
     renderRecentArchives();
-    expect(items().map((item) => item.textContent)).toEqual([
-      "first.7z",
-      "second.zip",
-    ]);
+    expect(
+      items().map(
+        (item) => item.querySelector(".header-recent__name")?.textContent,
+      ),
+    ).toEqual(["first.7z", "second.zip"]);
     expect(items()[0].title).toBe("/tmp/first.7z");
     trigger().click();
     await vi.waitFor(() =>
@@ -218,7 +219,11 @@ describe("Recent menu interaction", () => {
       "/tmp/e.7z",
     ]);
     rememberRecentArchive("/tmp/c.7z");
-    await vi.waitFor(() => expect(items()[0]?.textContent).toBe("c.7z"));
+    await vi.waitFor(() =>
+      expect(
+        items()[0]?.querySelector(".header-recent__name")?.textContent,
+      ).toBe("c.7z"),
+    );
     expect(loadRecentArchives()).toEqual([
       "/tmp/c.7z",
       "/tmp/a.7z",
@@ -227,7 +232,11 @@ describe("Recent menu interaction", () => {
       "/tmp/e.7z",
     ]);
     rememberRecentArchive("/tmp/new.7z");
-    await vi.waitFor(() => expect(items()[0]?.textContent).toBe("new.7z"));
+    await vi.waitFor(() =>
+      expect(
+        items()[0]?.querySelector(".header-recent__name")?.textContent,
+      ).toBe("new.7z"),
+    );
     expect(loadRecentArchives()).toHaveLength(5);
     expect(loadRecentArchives()).not.toContain("/tmp/e.7z");
     saveRecentArchives([]);

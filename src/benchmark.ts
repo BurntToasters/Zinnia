@@ -50,6 +50,10 @@ export async function runBenchmark(): Promise<void> {
       result.textContent = "Benchmark cancelled.";
       return;
     }
+    if (res.code !== 0) {
+      result.textContent = `Benchmark failed: 7-Zip exited with code ${res.code}.`;
+      return;
+    }
     const summary = parseBenchmarkSummary(res.stdout);
     result.textContent = summary ?? "Benchmark finished (no rating reported).";
   } catch (err) {

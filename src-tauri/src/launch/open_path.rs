@@ -68,7 +68,10 @@ pub(crate) fn normalize_destination_path(
             path.canonicalize().map_err(|e| e.to_string())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let parent = match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent,
+                _ => std::path::Path::new("."),
+            };
             let canonical_parent = parent
                 .canonicalize()
                 .map_err(|e| format!("Could not resolve destination parent: {e}"))?;
@@ -324,6 +327,50 @@ pub fn assert_extract_bound_archive(
     }
     Ok(())
 }
+pub(crate) fn destination_in_chosen_folder(
+    chosen: &std::path::Path,
+    archive: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let meta = std::fs::symlink_metadata(chosen)
+        .map_err(|_| "The chosen folder does not exist or cannot be read.".to_string())?;
+    crate::path_safety::reject_link_or_reparse(chosen, &meta).map_err(|_| {
+        "A symbolic link or reparse point cannot be used as the destination folder.".to_string()
+    })?;
+    if !meta.is_dir() {
+        return Err("Choose a folder, not a file.".to_string());
+    }
+    let name = archive
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "The archive name is not valid text.".to_string())?;
+    let folder = derive_extract_folder_name(name)
+        .ok_or_else(|| "Could not derive a folder name for this archive.".to_string())?;
+    let destination = chosen.join(folder);
+    match crate::path_safety::classify_extract_destination(&destination)? {
+        crate::path_safety::ExtractDestinationStatus::Invalid => {
+            Err("A file or link already uses that name in the chosen folder.".to_string())
+        }
+        crate::path_safety::ExtractDestinationStatus::Missing
+        | crate::path_safety::ExtractDestinationStatus::Directory => Ok(destination),
+    }
+}
+
+pub(crate) fn apply_picked_folder(
+    bindings: &mut std::collections::HashMap<String, super::ExtractBoundPaths>,
+    label: &str,
+    picked: Option<std::path::PathBuf>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let bound = bindings
+        .get_mut(label)
+        .ok_or_else(|| "Extract window has no bound destination.".to_string())?;
+    let Some(folder) = picked else {
+        return Ok(None);
+    };
+    let destination = destination_in_chosen_folder(&folder, &bound.archive)?;
+    bound.destination = destination.clone();
+    Ok(Some(destination))
+}
+
 #[tauri::command(async)]
 pub fn register_extract_open_path(
     app: tauri::AppHandle,
@@ -683,5 +730,304 @@ mod shell_namespace_tests {
             derive_extract_folder_name("draft{1}.zip").as_deref(),
             Some("draft{1}")
         );
+    }
+}
+
+#[cfg(test)]
+mod relative_destination_tests {
+    use super::{derive_extract_destination_path, normalize_destination_path};
+    use std::path::{Path, PathBuf};
+
+    fn canonical_cwd() -> PathBuf {
+        std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd")
+    }
+
+    fn missing_leaf(stem: &str) -> String {
+        format!("zinnia-beta2-{stem}-{}", std::process::id())
+    }
+
+    #[test]
+    fn relative_leaf_without_parent_resolves_under_current_dir() {
+        let leaf = missing_leaf("bare-leaf");
+        let normalized = normalize_destination_path(Path::new(&leaf)).expect("normalize");
+        assert_eq!(normalized, canonical_cwd().join(&leaf));
+    }
+
+    #[test]
+    fn relative_archive_destination_resolves_under_current_dir() {
+        let leaf = missing_leaf("archive");
+        let destination =
+            derive_extract_destination_path(&format!("{leaf}.zip")).expect("destination");
+        assert_eq!(destination, PathBuf::from(&leaf));
+        let normalized = normalize_destination_path(&destination).expect("normalize");
+        assert_eq!(normalized, canonical_cwd().join(&leaf));
+    }
+
+    #[test]
+    fn dot_slash_archive_destination_resolves_under_current_dir() {
+        let leaf = missing_leaf("dot-slash");
+        let destination =
+            derive_extract_destination_path(&format!("./{leaf}.zip")).expect("destination");
+        let normalized = normalize_destination_path(&destination).expect("normalize");
+        assert_eq!(normalized, canonical_cwd().join(&leaf));
+    }
+
+    #[test]
+    fn relative_subdirectory_destination_resolves_under_current_dir() {
+        assert!(
+            Path::new("src").is_dir(),
+            "cargo runs unit tests from the package root, which holds src/"
+        );
+        let leaf = missing_leaf("subdir");
+        let normalized =
+            normalize_destination_path(&PathBuf::from("src").join(&leaf)).expect("normalize");
+        assert_eq!(
+            normalized,
+            canonical_cwd()
+                .join("src")
+                .canonicalize()
+                .expect("canonical src")
+                .join(&leaf)
+        );
+    }
+
+    #[test]
+    fn absolute_destination_is_unchanged_by_relative_resolution() {
+        let base = std::env::temp_dir().canonicalize().expect("temp dir");
+        let leaf = missing_leaf("absolute");
+        let normalized = normalize_destination_path(&base.join(&leaf)).expect("normalize");
+        assert_eq!(normalized, base.join(&leaf));
+    }
+}
+
+#[cfg(test)]
+mod chosen_destination_tests {
+    use super::{
+        apply_picked_folder, derive_extract_destination_path, destination_in_chosen_folder,
+    };
+    use crate::launch::ExtractBoundPaths;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(stem: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("zinnia-beta2-chosen-{stem}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("scratch dir");
+            Self(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn chosen_folder(&self, name: &str) -> PathBuf {
+            let folder = self.0.join(name);
+            std::fs::create_dir_all(&folder).expect("chosen folder");
+            folder
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    fn make_directory_link(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+    }
+
+    #[cfg(windows)]
+    fn make_directory_link(link: &Path, target: &Path) {
+        use std::os::windows::process::CommandExt;
+        let status = std::process::Command::new("cmd")
+            .raw_arg(format!(
+                "/C mklink /J \"{}\" \"{}\"",
+                link.display(),
+                target.display()
+            ))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("cmd");
+        assert!(status.success(), "mklink /J failed for {}", link.display());
+    }
+
+    fn binding(archive: &str, destination: &str) -> ExtractBoundPaths {
+        ExtractBoundPaths {
+            destination: PathBuf::from(destination),
+            archive: PathBuf::from(archive),
+        }
+    }
+
+    fn snapshot(bindings: &HashMap<String, ExtractBoundPaths>) -> Vec<(String, PathBuf, PathBuf)> {
+        let mut rows: Vec<_> = bindings
+            .iter()
+            .map(|(label, bound)| {
+                (
+                    label.clone(),
+                    bound.destination.clone(),
+                    bound.archive.clone(),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn chosen_folder_derives_the_leaf_the_first_destination_used() {
+        let scratch = Scratch::new("leaf-match");
+        let chosen = scratch.chosen_folder("pick");
+        for archive in ["/data/hello.7z", "/data/report.tar.gz", "/data/Invoice.zip"] {
+            let first = derive_extract_destination_path(archive).expect("first destination");
+            let derived =
+                destination_in_chosen_folder(&chosen, Path::new(archive)).expect("derived");
+            assert_eq!(derived.file_name(), first.file_name(), "{archive}");
+            assert_eq!(derived.parent(), Some(chosen.as_path()), "{archive}");
+        }
+    }
+
+    #[test]
+    fn archive_without_a_known_suffix_keeps_the_extracted_suffix_rule() {
+        let scratch = Scratch::new("no-suffix");
+        let chosen = scratch.chosen_folder("pick");
+        let derived =
+            destination_in_chosen_folder(&chosen, Path::new("/data/notes.txt")).expect("derived");
+        assert_eq!(derived, chosen.join("notes.txt_extracted"));
+    }
+
+    #[test]
+    fn missing_chosen_folder_is_rejected() {
+        let scratch = Scratch::new("missing");
+        let chosen = scratch.path().join("absent");
+        let error = destination_in_chosen_folder(&chosen, Path::new("/data/hello.7z"))
+            .expect_err("missing folder");
+        assert!(error.contains("folder"), "{error}");
+    }
+
+    #[test]
+    fn chosen_path_that_is_a_file_is_rejected() {
+        let scratch = Scratch::new("file-pick");
+        let file = scratch.path().join("plain.txt");
+        std::fs::write(&file, b"plain").expect("file");
+        assert!(destination_in_chosen_folder(&file, Path::new("/data/hello.7z")).is_err());
+    }
+
+    #[test]
+    fn symlink_or_junction_chosen_folder_is_rejected() {
+        let scratch = Scratch::new("link-pick");
+        let target = scratch.chosen_folder("target");
+        let link = scratch.path().join("link");
+        make_directory_link(&link, &target);
+        let error = destination_in_chosen_folder(&link, Path::new("/data/hello.7z"))
+            .expect_err("link folder");
+        assert!(error.contains("link"), "{error}");
+    }
+
+    #[test]
+    fn existing_file_at_the_derived_name_is_rejected() {
+        let scratch = Scratch::new("collision-file");
+        let chosen = scratch.chosen_folder("pick");
+        std::fs::write(chosen.join("hello"), b"occupied").expect("collision");
+        assert!(destination_in_chosen_folder(&chosen, Path::new("/data/hello.7z")).is_err());
+    }
+
+    #[test]
+    fn existing_link_at_the_derived_name_is_rejected() {
+        let scratch = Scratch::new("collision-link");
+        let chosen = scratch.chosen_folder("pick");
+        let target = scratch.chosen_folder("elsewhere");
+        make_directory_link(&chosen.join("hello"), &target);
+        let error = destination_in_chosen_folder(&chosen, Path::new("/data/hello.7z"))
+            .expect_err("link at derived name");
+        assert!(error.contains("link"), "{error}");
+    }
+
+    #[test]
+    fn existing_directory_at_the_derived_name_is_allowed_like_the_first_destination() {
+        let scratch = Scratch::new("collision-dir");
+        let chosen = scratch.chosen_folder("pick");
+        std::fs::create_dir_all(chosen.join("hello")).expect("existing destination");
+        let derived =
+            destination_in_chosen_folder(&chosen, Path::new("/data/hello.7z")).expect("merge");
+        assert_eq!(derived, chosen.join("hello"));
+    }
+
+    #[test]
+    fn cancelled_pick_returns_none_and_keeps_the_binding() {
+        let mut bindings = HashMap::from([(
+            "extract-0".to_string(),
+            binding("/data/hello.7z", "/data/readonly/hello"),
+        )]);
+        let before = snapshot(&bindings);
+        let outcome =
+            apply_picked_folder(&mut bindings, "extract-0", None).expect("cancel is not an error");
+        assert_eq!(outcome, None);
+        assert_eq!(snapshot(&bindings), before);
+    }
+
+    #[test]
+    fn picked_folder_replaces_only_the_target_labels_destination() {
+        let scratch = Scratch::new("rebind");
+        let chosen = scratch.chosen_folder("writable");
+        let mut bindings = HashMap::from([
+            (
+                "extract-0".to_string(),
+                binding("/data/hello.7z", "/data/readonly/hello"),
+            ),
+            (
+                "extract-1".to_string(),
+                binding("/other/notes.zip", "/other/notes"),
+            ),
+        ]);
+        let outcome =
+            apply_picked_folder(&mut bindings, "extract-0", Some(chosen.clone())).expect("rebind");
+        let expected = chosen.join("hello");
+        assert_eq!(outcome, Some(expected.clone()));
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings["extract-0"].destination, expected);
+        assert_eq!(
+            bindings["extract-0"].archive,
+            PathBuf::from("/data/hello.7z")
+        );
+        assert_eq!(
+            bindings["extract-1"].destination,
+            PathBuf::from("/other/notes")
+        );
+        assert_eq!(
+            bindings["extract-1"].archive,
+            PathBuf::from("/other/notes.zip")
+        );
+    }
+
+    #[test]
+    fn rejected_pick_leaves_the_binding_unchanged() {
+        let scratch = Scratch::new("rejected-pick");
+        let file = scratch.path().join("plain.txt");
+        std::fs::write(&file, b"plain").expect("file");
+        let mut bindings = HashMap::from([(
+            "extract-0".to_string(),
+            binding("/data/hello.7z", "/data/readonly/hello"),
+        )]);
+        let before = snapshot(&bindings);
+        assert!(apply_picked_folder(&mut bindings, "extract-0", Some(file)).is_err());
+        assert_eq!(snapshot(&bindings), before);
+    }
+
+    #[test]
+    fn rebinding_a_label_without_a_binding_is_rejected() {
+        let scratch = Scratch::new("no-binding");
+        let chosen = scratch.chosen_folder("pick");
+        let mut bindings: HashMap<String, ExtractBoundPaths> = HashMap::new();
+        assert!(apply_picked_folder(&mut bindings, "extract-9", Some(chosen)).is_err());
+        assert!(bindings.is_empty());
     }
 }

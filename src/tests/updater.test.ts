@@ -225,7 +225,7 @@ describe("checkUpdates", () => {
         if (fails) {
           expect(
             document.getElementById("toast-region")?.textContent,
-          ).toContain("Failed to install update. installer unavailable");
+          ).toContain("Update install failed. installer unavailable");
         } else {
           expect(relaunchCalls()).toBe(1);
         }
@@ -772,11 +772,23 @@ describe("install outcome", () => {
       mode: "release_update",
     });
     expect(relaunchCalls()).toBe(0);
-    expect(toastText()).toContain(
-      "Failed to check for updates. install failed",
-    );
+    expect(toastText()).toContain("Update install failed. install failed");
     expect(toastText()).not.toContain("Update installed");
-    expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update install failed.");
+  });
+
+  it("reports a failed download of a new update from an interactive check", async () => {
+    const update = fakeUpdate("0.5.0");
+    update.download.mockRejectedValueOnce(new Error("network reset"));
+    checkMock.mockResolvedValue(asCheckResult(update));
+
+    await checkUpdates();
+
+    expect(update.install).not.toHaveBeenCalled();
+    expect(update.close).toHaveBeenCalledOnce();
+    expect(toastText()).toContain("Update download failed. network reset");
+    expect(toastText()).not.toContain("Failed to check");
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update download failed.");
   });
 });
 
@@ -872,15 +884,13 @@ describe("parked background update", () => {
 
     indicatorButton().click();
     await vi.waitFor(() =>
-      expect(toastText()).toContain(
-        "Failed to install update. download failed",
-      ),
+      expect(toastText()).toContain("Update download failed. download failed"),
     );
     expect(logMock).toHaveBeenCalledWith(
       "Updater error: download failed",
       "error",
     );
-    expect(setStatusMock).toHaveBeenLastCalledWith("Update available");
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update download failed.");
     expect(indicatorButton().hidden).toBe(false);
     expect(indicatorButton().textContent).toBe(
       "Update 0.5.0 available. Click to install",
@@ -931,7 +941,7 @@ describe("parked background update", () => {
     expect(checkMock).toHaveBeenCalledOnce();
   });
 
-  it("restores Update available when an interactive check cannot download a parked update", async () => {
+  it("reports a failed download of a parked update from an interactive check and keeps it parked", async () => {
     const update = fakeUpdate("0.5.0");
     update.download.mockRejectedValueOnce(new Error("download failed"));
     checkMock.mockResolvedValue(asCheckResult(update));
@@ -940,10 +950,8 @@ describe("parked background update", () => {
     await checkUpdates();
 
     expect(logMock).toHaveBeenCalledWith("Updater error: download failed");
-    expect(toastText()).toContain(
-      "Failed to check for updates. download failed",
-    );
-    expect(setStatusMock).toHaveBeenLastCalledWith("Update available");
+    expect(toastText()).toContain("Update download failed. download failed");
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update download failed.");
     expect(indicatorButton().textContent).toBe(
       "Update 0.5.0 available. Click to install",
     );

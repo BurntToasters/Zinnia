@@ -86,6 +86,7 @@ addEl("div", "log");
 addEl("div", "status");
 addEl("div", "progress");
 addEl("button", "update-ready-indicator").hidden = true;
+addEl("button", "basic-update-indicator").hidden = true;
 addEl("div", "version-label");
 addEl("div", "platform-label");
 

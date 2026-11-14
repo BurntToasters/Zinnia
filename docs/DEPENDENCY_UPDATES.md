@@ -61,10 +61,42 @@ The `audit.toml` ignores expire on 2027-03-01. No ignore is due before then.
 The Rust side is vendored at `src-tauri/vendor/tauri-plugin-updater`, and the
 vendored copy carries local patches. Upstream is at 2.14.x.
 
-A re-vendor against upstream 2.14.x is scheduled after 0.7.0-beta.1. It must
+A re-vendor against upstream 2.14.x was scheduled after 0.7.0-beta.1 and is not
+part of 0.7.0-beta.2. It must
 re-apply every documented patch: macOS transactional install, confined tar
 extraction, Linux helper PATH, Windows ShellExecute, download stall limit,
 minisign-verify 0.3, and zip 9. Do not bump the npm pin on its own.
+
+## Vendored crate watch
+
+`npm run deps:vendored` reads the `[package]` name and version from each
+`src-tauri/vendor/*/Cargo.toml`, asks the crates.io API for the latest stable
+release of each crate, and prints a table with the crate, the vendored version,
+the latest stable version, and a status:
+
+- `current`: the vendored version is the latest stable release, or a
+  pre-release newer than it.
+- `behind`: crates.io has a newer stable release.
+- `not on crates.io`: crates.io returned 404 for the crate name.
+- `fetch failed`: the request timed out, failed at the network level, returned
+  a non-404 HTTP error, or returned a response without a usable stable version.
+  The reason is printed in parentheses. A failure for one crate does not stop
+  the report for the others.
+
+The command is report-only. It exits 0 unless the script itself fails, such as
+a vendored `Cargo.toml` with no literal `[package]` name or version. It does
+not edit files, change `Cargo.toml`, or open issues. Requests send the
+User-Agent `zinnia-vendored-crates-watch`. The weekly `7-Zip watch` workflow
+runs it with `continue-on-error`, so the table appears in the job log without
+failing the job. The script's own tests run in `npm run test:cargo-safe-update`,
+which `npm run test:all` also runs.
+
+A `behind` result does not mean a vendored crate should be re-vendored now.
+Updating a vendored crate still follows
+[`src-tauri/vendor/README.md`](../src-tauri/vendor/README.md): re-apply every
+documented patch to the new upstream release, keep the `[patch.crates-io]`
+entry until upstream carries the same fixes, and do not drop a vendored copy
+without an equivalent upstream fix.
 
 ## Lucide
 

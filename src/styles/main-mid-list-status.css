@@ -241,9 +241,15 @@ body.platform-macos .btn--shortcut::after {
   color: var(--text-secondary);
   padding: 0;
   user-select: none;
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .statusbar__item {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 3px 10px;
   border-right: 1px solid var(--border);
 }
@@ -255,4 +261,5 @@ body.platform-macos .btn--shortcut::after {
 
 .statusbar__spacer {
   flex: 1;
+  min-width: 0;
 }

@@ -175,6 +175,7 @@
 }
 
 .basic-completion__path {
+  box-sizing: border-box;
   max-width: 100%;
   margin: 0;
   padding: 6px 8px;
@@ -229,6 +230,6 @@
   }
 
   .basic-progress__bar-fill {
-    background: Highlight;
+    background: Highlight !important;
   }
 }

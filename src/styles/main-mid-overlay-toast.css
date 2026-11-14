@@ -3,7 +3,7 @@
 }
 
 .modal-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   background: var(--overlay);
   backdrop-filter: blur(4px);
@@ -160,14 +160,15 @@
 
 .toast {
   pointer-events: auto;
-  cursor: pointer;
   padding: 10px 14px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
   font-size: 0.8125rem;
-  box-shadow: var(--shadow);
+  box-shadow: 0 4px 12px var(--shadow);
+  max-height: min(220px, 40vh);
+  overflow-y: auto;
   animation: toast-in 0.18s ease-out;
   display: flex;
   align-items: flex-start;
@@ -206,6 +207,34 @@
 .toast-dismiss:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: 2px;
+}
+
+.toast-copy {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 3px;
+}
+
+.toast-copy:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.toast-count {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .toast--leaving {
@@ -253,7 +282,8 @@
     border: 2px solid ButtonText;
   }
 
-  .toast-dismiss:focus-visible {
+  .toast-dismiss:focus-visible,
+  .toast-copy:focus-visible {
     outline: 2px solid Highlight;
   }
 }

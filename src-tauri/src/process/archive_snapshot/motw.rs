@@ -99,6 +99,9 @@ pub(crate) fn copy_windows_zone_identifier_with_identity(
     }
     drop(reopened);
     drop(source_file);
+    if contents.is_empty() {
+        return Ok(());
+    }
     let Some(payload) = decode_zone_identifier(&contents) else {
         return Err("Archive Mark-of-the-Web has an invalid format.".to_string());
     };
@@ -140,4 +143,90 @@ pub(crate) fn copy_windows_zone_identifier_with_identity(
         .write_all(&payload)
         .and_then(|()| destination_stream.sync_all())
         .map_err(|error| format!("Could not preserve archive Mark-of-the-Web: {error}"))
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::copy_windows_zone_identifier;
+
+    struct ScratchDir {
+        path: std::path::PathBuf,
+    }
+
+    impl ScratchDir {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+            loop {
+                let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir()
+                    .join(format!("zinnia-motw-{name}-{}-{id}", std::process::id()));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self { path },
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("scratch directory should be created: {error}"),
+                }
+            }
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn zone_stream(path: &std::path::Path) -> std::path::PathBuf {
+        let mut value = path.as_os_str().to_os_string();
+        value.push(":Zone.Identifier");
+        value.into()
+    }
+
+    fn copy_with_source_stream(
+        scratch: &ScratchDir,
+        stream: &[u8],
+    ) -> (std::path::PathBuf, Result<(), String>) {
+        let source = scratch.path.join("archive.7z");
+        let destination = scratch.path.join("snapshot.7z");
+        std::fs::write(&source, b"archive payload").expect("source archive");
+        std::fs::write(&destination, b"snapshot payload").expect("destination archive");
+        std::fs::write(zone_stream(&source), stream).expect("source Zone.Identifier stream");
+        let result = copy_windows_zone_identifier(&source, &destination);
+        (destination, result)
+    }
+
+    #[test]
+    fn empty_zone_identifier_stream_is_treated_as_no_zone() {
+        let scratch = ScratchDir::new("empty");
+        let (destination, result) = copy_with_source_stream(&scratch, b"");
+        result.expect("an empty Zone.Identifier stream should mean no zone");
+        let missing = std::fs::metadata(zone_stream(&destination))
+            .expect_err("no destination Zone.Identifier stream should be written");
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn zone_transfer_header_without_zone_id_is_copied_verbatim() {
+        let scratch = ScratchDir::new("header-only");
+        let stream = b"[ZoneTransfer]\r\n";
+        let (destination, result) = copy_with_source_stream(&scratch, stream);
+        result.expect("a Zone.Identifier with only the header should copy");
+        assert_eq!(
+            std::fs::read(zone_stream(&destination)).expect("destination Zone.Identifier"),
+            stream
+        );
+    }
+
+    #[test]
+    fn zone_id_three_is_copied_verbatim() {
+        let scratch = ScratchDir::new("zone-three");
+        let stream = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+        let (destination, result) = copy_with_source_stream(&scratch, stream);
+        result.expect("a Zone.Identifier with ZoneId=3 should copy");
+        assert_eq!(
+            std::fs::read(zone_stream(&destination)).expect("destination Zone.Identifier"),
+            stream
+        );
+    }
 }

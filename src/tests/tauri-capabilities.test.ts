@@ -276,6 +276,29 @@ describe("Tauri capability policy", () => {
     expect(permissions).not.toContain("dialog:allow-confirm");
   });
 
+  it("grants choose_extract_destination to extract windows only", () => {
+    const buildRs = fs.readFileSync(
+      path.resolve(process.cwd(), "src-tauri", "build.rs"),
+      "utf8",
+    );
+    const mainRs = fs.readFileSync(
+      path.resolve(process.cwd(), "src-tauri", "src", "main.rs"),
+      "utf8",
+    );
+    expect(buildRs).toContain('"choose_extract_destination"');
+    expect(mainRs).toContain("launch::choose_extract_destination");
+
+    expect(readCapability("extract").permissions).toContain(
+      "allow-choose-extract-destination",
+    );
+    expect(readCapability("default").permissions).not.toContain(
+      "allow-choose-extract-destination",
+    );
+    expect(readCapability("debug-console").permissions).not.toContain(
+      "allow-choose-extract-destination",
+    );
+  });
+
   it("keeps the debug console window to listen plus an allowlisted signal relay", () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), "src", "debug-console-window.ts"),

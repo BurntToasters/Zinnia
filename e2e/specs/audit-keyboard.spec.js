@@ -90,6 +90,16 @@ async function stickyToastCount() {
   );
 }
 
+async function stickyToastTexts() {
+  return browser.execute(() =>
+    [
+      ...document.querySelectorAll(
+        '.toast[data-sticky="true"]:not(.toast--leaving) .toast-message',
+      ),
+    ].map((el) => el.textContent ?? ""),
+  );
+}
+
 /** Enter with the IME flag set, dispatched on the named control. */
 async function dispatchEnterOn(id, { composing }) {
   await browser.execute(
@@ -269,22 +279,73 @@ describe("audit keyboard", function () {
   });
 
   it("keeps at most three sticky toasts on screen", async () => {
-    const corrupt = path.join(ROOT, "corrupt-cap.7z");
-    fs.copyFileSync(HELLO_7Z, corrupt);
-    fs.truncateSync(corrupt, 128);
+    const capDir = path.join(ROOT, "sticky-cap");
+    fs.mkdirSync(capDir, { recursive: true });
+    const truncated7z = path.join(capDir, "truncated.7z");
+    fs.copyFileSync(HELLO_7Z, truncated7z);
+    fs.truncateSync(truncated7z, 128);
+    const truncatedZip = path.join(capDir, "truncated.zip");
+    fs.copyFileSync(HELLO_ZIP, truncatedZip);
+    fs.truncateSync(truncatedZip, 40);
+    const tailZip = path.join(capDir, "tail-cut.zip");
+    fs.copyFileSync(HELLO_ZIP, tailZip);
+    fs.truncateSync(tailZip, fs.statSync(HELLO_ZIP).size - 8);
+    const noise7z = path.join(capDir, "noise.7z");
+    fs.writeFileSync(
+      noise7z,
+      Buffer.concat([
+        fs.readFileSync(HELLO_7Z).subarray(0, 6),
+        Buffer.from(
+          Array.from({ length: 4096 }, (_, i) => (i * 37 + 11) % 256),
+        ),
+      ]),
+    );
+    const headless7z = path.join(capDir, "header-only.7z");
+    fs.copyFileSync(HELLO_7Z, headless7z);
+    fs.truncateSync(headless7z, 32);
+    const sources = [truncated7z, truncatedZip, tailZip, noise7z, headless7z];
 
     await dismissToasts();
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      await openBasicBrowseForArchive(corrupt);
-      const expectedAtLeast = Math.min(attempt, 3);
-      await browser.waitUntil(
-        async () => (await stickyToastCount()) >= expectedAtLeast,
-        {
-          timeout: 120_000,
-          timeoutMsg: `browse ${attempt} did not add a sticky toast`,
-        },
-      );
+    const seen = new Set();
+    const counts = [];
+    for (const source of sources) {
+      const before = await stickyToastTexts();
+      await openBasicBrowseForArchive(source);
+      await browser
+        .waitUntil(
+          async () =>
+            (await stickyToastTexts()).some((text) => !before.includes(text)),
+          { timeout: 60_000 },
+        )
+        .catch(() => {});
+      await waitForArchiveIdle();
+      for (const text of await stickyToastTexts()) seen.add(text);
+      counts.push(await stickyToastCount());
+      const beforeTest = await stickyToastTexts();
+      await browser.execute(() => {
+        document.getElementById("basic-browse-test")?.click();
+      });
+      await browser
+        .waitUntil(
+          async () =>
+            (await stickyToastTexts()).some(
+              (text) => !beforeTest.includes(text),
+            ),
+          { timeout: 60_000 },
+        )
+        .catch(() => {});
+      await waitForArchiveIdle();
+      for (const text of await stickyToastTexts()) seen.add(text);
+      counts.push(await stickyToastCount());
     }
+    assert.ok(
+      seen.size >= 4,
+      `the failing archives produced only ${seen.size} distinct sticky toasts`,
+    );
+    assert.ok(
+      counts.every((count) => count <= 3),
+      `more than three sticky toasts were on screen: ${JSON.stringify(counts)}`,
+    );
     await browser.waitUntil(async () => (await stickyToastCount()) === 3, {
       timeout: 30_000,
       timeoutMsg: "sticky toasts were not capped at three",
@@ -293,6 +354,8 @@ describe("audit keyboard", function () {
 
     writeEvidence(EVIDENCE_DIR, "audit-keyboard-sticky-cap", {
       scenario: "sticky-toast-cap-three",
+      distinctStickyToasts: seen.size,
+      countsAfterEachBrowse: counts,
       stickyCount: count,
     });
     await dismissToasts();

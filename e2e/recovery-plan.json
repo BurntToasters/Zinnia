@@ -23,6 +23,14 @@
       "expect": "rolled-back"
     },
     {
+      "id": "extract-mid-batch",
+      "operation": "extract",
+      "point": "mid-batch",
+      "destination": "preexisting",
+      "entries": 300,
+      "expect": "rolled-back"
+    },
+    {
       "id": "extract-after-commit",
       "operation": "extract",
       "point": "after-commit",
@@ -85,7 +93,21 @@
     "./specs/audit-lifecycle.spec.js",
     "./specs/audit-picker.spec.js",
     "./specs/audit-a11y.spec.js",
-    "./specs/audit-copy.spec.js"
+    "./specs/audit-copy.spec.js",
+    "./specs/beta2-rust-launch-exit.spec.js",
+    "./specs/beta2-fe-boot-stop.spec.js",
+    "./specs/beta2-fe-basic-sync.spec.js",
+    "./specs/beta2-fe-password-batch.spec.js",
+    "./specs/beta2-rust-stream-listing.spec.js",
+    "./specs/beta2-quick-extract-recovery.spec.js",
+    "./specs/beta2-fe-large-listing.spec.js",
+    "./specs/beta2-basic-destination.spec.js",
+    "./specs/beta2-ui-markup.spec.js",
+    "./specs/beta2-fe-chrome.spec.js",
+    "./specs/beta2-fe-cleanup.spec.js",
+    "./specs/beta2-styles-basic.spec.js",
+    "./specs/beta2-styles-core.spec.js",
+    "./specs/beta2-copy-sweep.spec.js"
   ],
-  "suiteCount": 45
+  "suiteCount": 61
 }

@@ -90,14 +90,14 @@
           >
             <div class="extract-progress-fill" id="progress-fill"></div>
           </div>
+          <div class="extract-status" id="extract-status">Preparing…</div>
           <div
-            class="extract-status"
-            id="extract-status"
+            class="visually-hidden"
+            id="extract-announcer"
+            role="status"
             aria-live="polite"
             aria-atomic="true"
-          >
-            Preparing...
-          </div>
+          ></div>
         </div>
 
         <div class="extract-error" id="extract-error" role="alert" hidden>
@@ -120,6 +120,9 @@
         <button class="btn" id="cancel-btn">Cancel</button>
         <button class="btn btn--open" id="open-destination-btn" hidden>
           Open destination
+        </button>
+        <button class="btn" id="choose-folder-btn" hidden>
+          Choose another folder
         </button>
         <button class="btn" id="retry-btn" hidden>Retry</button>
         <button class="btn btn--close" id="close-btn" hidden>Close</button>
@@ -157,9 +160,11 @@
           </label>
         </div>
         <div class="extract-input-modal__footer">
-          <button class="btn btn--sm" id="input-modal-confirm">OK</button>
           <button class="btn btn--ghost btn--sm" id="input-modal-cancel">
             Cancel
+          </button>
+          <button class="btn btn--primary btn--sm" id="input-modal-confirm">
+            OK
           </button>
         </div>
       </div>
