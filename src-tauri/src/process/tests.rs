@@ -6797,13 +6797,13 @@ fn recovery_ignores_torn_unjournaled_identity_record() {
 
 #[cfg(not(windows))]
 #[test]
-fn recovery_rejects_two_unjournaled_identity_records() {
+fn recovery_rejects_unjournaled_identity_tail_beyond_one_batch() {
     let record = b"{\"index\":0,\"identity\":null}\n";
-    let mut suffix = record.to_vec();
-    suffix.extend_from_slice(record);
-    let fixture = unjournaled_log_fixture("zinnia-unjournaled-two", &suffix);
+    let suffix = record.repeat(super::journal::MOVE_IDENTITY_BATCH_RECORDS + 1);
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-over-batch", &suffix);
 
-    let error = rollback_unjournaled_fixture(&fixture).expect_err("two records must fail closed");
+    let error = rollback_unjournaled_fixture(&fixture)
+        .expect_err("a tail longer than one batch must fail closed");
     assert!(error.contains("length changed"), "{error}");
     assert_eq!(std::fs::read(&fixture.target).unwrap(), b"corrected copy");
     assert!(super::journal::cleanup_transaction_artifacts(
