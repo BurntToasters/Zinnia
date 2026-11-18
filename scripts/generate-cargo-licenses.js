@@ -81,6 +81,10 @@ const REVIEWED_SOURCE_OMISSIONS = new Map([
     "The crates.io package and its pinned upstream source revision contain no license text beyond the MPL-2.0 declaration in Cargo.toml.",
   ],
   [
+    "selectors@0.41.0",
+    "The crates.io package and its pinned upstream source revision contain no license text beyond the MPL-2.0 declaration in Cargo.toml.",
+  ],
+  [
     "sigchld@0.2.4",
     "The crates.io package and its pinned upstream source revision contain no license text beyond the MIT declaration in Cargo.toml.",
   ],
