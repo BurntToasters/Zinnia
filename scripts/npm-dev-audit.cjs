@@ -22,6 +22,14 @@ const REVIEWED_ADVISORIES = new Map([
   ["GHSA-G3HV-75WG-M249", "minimatch"],
   ["GHSA-3G3M-2FJR-6PW4", "glob"],
   ["GHSA-M5MM-P8H7-M29V", "serialize-javascript"],
+  // Reviewed 2026-11-17. picomatch has no patched release (affects all
+  // versions); copies come from vite, vitest, mocha/chokidar and
+  // expect-webdriverio and only match repository globs. basic-ftp is fixed
+  // only via @wdio/local-runner 10 (semver major); it is reached through
+  // @puppeteer/browsers proxy-agent and never talks to an FTP server here.
+  ["GHSA-FC5Q-39XC-VJPF", "picomatch"],
+  ["GHSA-5PM8-86M8-9M6R", "basic-ftp"],
+  ["GHSA-R4JH-29PC-GFQR", "basic-ftp"],
 ]);
 
 function advisoryId(via) {
