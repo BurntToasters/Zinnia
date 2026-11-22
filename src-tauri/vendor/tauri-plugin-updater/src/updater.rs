@@ -1007,98 +1007,35 @@ impl Update {
     }
 
     fn install_appimage(&self, bytes: &[u8]) -> Result<()> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let extract_path_metadata = self.extract_path.metadata()?;
+        use std::io::Write;
 
-        let tmp_dir_locations = [
-            Some(std::env::temp_dir()),
-            dirs::cache_dir(),
-            self.extract_path.parent().map(Path::to_path_buf),
-        ];
-        let tmp_dir = match crate::install_safety::select_same_device_temp_dir(
-            extract_path_metadata.dev(),
-            tmp_dir_locations,
-            |location| -> std::io::Result<_> {
-                let tmp_dir = tempfile::Builder::new()
-                    .prefix("tauri_current_app")
-                    .tempdir_in(location)?;
-                let device = tmp_dir.path().metadata()?.dev();
-                Ok((tmp_dir, device))
-            },
-        ) {
-            Ok(tmp_dir) => tmp_dir,
-            Err(crate::install_safety::SameDeviceTempDirError::Candidate(err)) => {
-                return Err(err.into());
-            }
-            Err(crate::install_safety::SameDeviceTempDirError::NoSameDeviceCandidate) => {
-                return Err(Error::TempDirNotOnSameMountPoint);
-            }
-        };
-
-        let mut perms = tmp_dir.path().metadata()?.permissions();
-        perms.set_mode(0o700);
-        std::fs::set_permissions(tmp_dir.path(), perms)?;
-
-        let tmp_app_image = &tmp_dir.path().join("current_app.AppImage");
-
-        let permissions = std::fs::metadata(&self.extract_path)?.permissions();
-
-        // create a backup of our current app image
-        std::fs::rename(&self.extract_path, tmp_app_image)?;
+        self.extract_path.metadata()?;
 
         #[cfg(feature = "zip")]
         if infer::archive::is_gz(bytes) {
             log::debug!("extracting AppImage");
-            // extract the buffer to the tmp_dir
-            // we extract our signed archive into our final directory without any temp file
             let archive = Cursor::new(bytes);
             let decoder = flate2::read::GzDecoder::new(archive);
             let mut archive = tar::Archive::new(decoder);
             for mut entry in archive.entries()?.flatten() {
                 if let Ok(path) = entry.path() {
                     if path.extension() == Some(OsStr::new("AppImage")) {
-                        // if something went wrong during the extraction, we should restore previous app
-                        if let Err(err) = entry.unpack(&self.extract_path) {
-                            std::fs::rename(tmp_app_image, &self.extract_path)?;
-                            return Err(err.into());
-                        }
-                        // early finish we have everything we need here
-                        return Ok(());
+                        return crate::install_safety::replace_file_atomically(
+                            &self.extract_path,
+                            |file| std::io::copy(&mut entry, file).map(|_| ()),
+                        )
+                        .map_err(Error::from);
                     }
                 }
             }
-            // if we have not returned early we should restore the backup
-            std::fs::rename(tmp_app_image, &self.extract_path)?;
             return Err(Error::BinaryNotFoundInArchive);
         }
 
         log::debug!("rewriting AppImage");
-        // Write beside the live AppImage and rename over it, so a failed write
-        // never leaves a partial file at the launch path.
-        let written = (|| -> Result<()> {
-            use std::io::Write;
-            let parent = self
-                .extract_path
-                .parent()
-                .ok_or(Error::FailedToDetermineExtractPath)?;
-            let mut staged = tempfile::Builder::new()
-                .prefix(".zinnia-appimage-")
-                .tempfile_in(parent)?;
-            staged.write_all(bytes)?;
-            staged.as_file().set_permissions(permissions)?;
-            staged
-                .persist(&self.extract_path)
-                .map_err(|err| err.error)?;
-            Ok(())
-        })();
-        match written {
-            Err(err) => {
-                // if something went wrong during the extraction, we should restore previous app
-                std::fs::rename(tmp_app_image, &self.extract_path)?;
-                Err(err)
-            }
-            Ok(_) => Ok(()),
-        }
+        crate::install_safety::replace_file_atomically(&self.extract_path, |file| {
+            file.write_all(bytes)
+        })
+        .map_err(Error::from)
     }
 
     fn install_deb(&self, bytes: &[u8]) -> Result<()> {
@@ -1356,7 +1293,8 @@ impl Update {
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
         use crate::install_safety::{
             install_macos_app_contents, is_cross_device, macos_app_bundle_complete,
-            macos_update_backup_path, MACOS_PRIVILEGED_INSTALL_SCRIPT,
+            macos_legacy_update_backup_path, macos_update_backup_path, recover_macos_app_backups,
+            MACOS_PRIVILEGED_INSTALL_SCRIPT,
         };
 
         let app_parent = self
@@ -1364,6 +1302,8 @@ impl Update {
             .parent()
             .ok_or(Error::FailedToDetermineExtractPath)?;
         let backup_path = macos_update_backup_path(&self.extract_path)
+            .ok_or(Error::FailedToDetermineExtractPath)?;
+        let legacy_backup_path = macos_legacy_update_backup_path(&self.extract_path)
             .ok_or(Error::FailedToDetermineExtractPath)?;
 
         let tmp_extract_dir = match tempfile::Builder::new()
@@ -1392,45 +1332,40 @@ impl Update {
         let payload = std::fs::read_to_string(tmp_extract_dir.path().join("Contents/Info.plist"))
             .ok()
             .and_then(|xml| crate::install_safety::macos_plist_short_version(&xml));
-        if !payload_version_is_acceptable(payload.as_deref(), &self.current_version) {
+        let payload_build =
+            std::fs::read_to_string(tmp_extract_dir.path().join("Contents/Info.plist"))
+                .ok()
+                .and_then(|xml| crate::install_safety::macos_plist_build_version(&xml));
+        let installed_build =
+            std::fs::read_to_string(self.extract_path.join("Contents/Info.plist"))
+                .ok()
+                .and_then(|xml| crate::install_safety::macos_plist_build_version(&xml));
+        let build_refused = crate::install_safety::payload_build_is_newer(
+            payload_build.as_deref(),
+            installed_build.as_deref(),
+        ) == Some(false);
+        if !payload_version_is_acceptable(payload.as_deref(), &self.current_version)
+            || build_refused
+        {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "update payload version {} is not newer than installed version {}",
-                    payload.unwrap_or_default(),
-                    self.current_version
+                    "update payload version {} (build {}) is not newer than installed version {} (build {})",
+                    payload.unwrap_or_else(|| "unknown".into()),
+                    payload_build.unwrap_or_else(|| "unknown".into()),
+                    self.current_version,
+                    installed_build.unwrap_or_else(|| "unknown".into())
                 ),
             )));
         }
 
-        let mut restore_denied = None;
-        if !macos_app_bundle_complete(&self.extract_path) && macos_app_bundle_complete(&backup_path)
-        {
-            // New backups and legacy whole-bundle backups both contain
-            // Contents. Recover it without moving the outer app directory.
-            let restore = (|| -> std::io::Result<()> {
-                std::fs::create_dir_all(&self.extract_path)?;
-                let contents = self.extract_path.join("Contents");
-                if contents.exists() {
-                    std::fs::remove_file(&contents)?;
-                }
-                std::fs::rename(backup_path.join("Contents"), contents)?;
-                std::fs::remove_dir_all(&backup_path)
-            })();
-            if let Err(err) = restore {
-                if err.kind() != std::io::ErrorKind::PermissionDenied {
-                    return Err(err.into());
-                }
-                restore_denied = Some(err);
-            }
-        } else if macos_app_bundle_complete(&self.extract_path) && backup_path.exists() {
-            let _ = std::fs::remove_dir_all(&backup_path);
-        }
+        let recovery =
+            recover_macos_app_backups(&self.extract_path, &backup_path, &legacy_backup_path)?;
 
         // A backup that could not be restored still exists, so the unprivileged
         // install would fail on it. The privileged script completes the recovery.
         let unprivileged =
-            if crate::install_safety::restore_error_needs_admin(restore_denied.as_ref()) {
+            if crate::install_safety::restore_error_needs_admin(recovery.restore_denied.as_ref()) {
                 Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
             } else {
                 install_macos_app_contents(tmp_extract_dir.path(), &self.extract_path, &backup_path)
@@ -1444,7 +1379,7 @@ impl Update {
                 log::debug!("app installation needs admin privileges");
                 let src = self.extract_path.to_string_lossy().into_owned();
                 let new = tmp_extract_dir.path().to_string_lossy().into_owned();
-                let backup = backup_path.to_string_lossy().into_owned();
+                let backup = recovery.install_backup.to_string_lossy().into_owned();
                 let (tx, rx) = std::sync::mpsc::channel();
                 let res = (self.run_on_main_thread)(Box::new(move || {
                     let mut script = osakit::Script::new_from_source(

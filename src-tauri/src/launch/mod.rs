@@ -63,12 +63,12 @@ pub fn e2e_session_active() -> bool {
     }
 }
 
-/// macOS background E2E runs: the app never takes focus or joins the Dock.
+/// Local background E2E runs avoid activating the app.
 /// scripts/test-e2e.js sets `ZINNIA_E2E_BACKGROUND=1` unless CI or
 /// `ZINNIA_E2E_FOREGROUND=1` is set.
 #[cfg(feature = "e2e")]
 pub fn e2e_background() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(windows, target_os = "macos"))
         && e2e_session_active()
         && std::env::var("ZINNIA_E2E_BACKGROUND").as_deref() == Ok("1")
 }
@@ -106,6 +106,10 @@ where
         }
     }
     if e2e_background() {
+        #[cfg(windows)]
+        {
+            builder = builder.focusable(false);
+        }
         // Stay below other apps, never focused, and keep timers running while occluded.
         builder = builder
             .focused(false)

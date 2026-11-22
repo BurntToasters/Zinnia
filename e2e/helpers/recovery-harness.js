@@ -411,6 +411,7 @@ export function prepareCancelRace(profile, caseId) {
  * archive; the executable name is the only stable signal.
  */
 export function sevenZipProcesses(platform = process.platform) {
+  const checkout = path.resolve(REPO_ROOT);
   if (platform === "win32") {
     const output = execFileSync(
       "powershell.exe",
@@ -418,23 +419,33 @@ export function sevenZipProcesses(platform = process.platform) {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        'Get-CimInstance Win32_Process -Filter "Name LIKE \'7z%\'" | ForEach-Object { "$($_.ProcessId) $($_.Name)" }',
+        'Get-CimInstance Win32_Process -Filter "Name LIKE \'7z%\'" | ForEach-Object { "$($_.ProcessId) $($_.Name) $($_.ExecutablePath)" }',
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", windowsHide: true },
     );
+    const prefix = `${checkout.replace(/\//g, "\\").toLowerCase()}\\`;
     return output
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+      .filter((line) => {
+        const match = /^\d+\s+\S+\s+(.+)$/.exec(line);
+        return (
+          match !== null &&
+          match[1].replace(/\//g, "\\").toLowerCase().startsWith(prefix)
+        );
+      });
   }
   const output = execFileSync("ps", ["-axww", "-o", "pid=,command="], {
     encoding: "utf8",
   });
+  const prefix = `${checkout}${path.sep}`;
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => {
-      const executable = line.replace(/^\d+\s+/, "").split(/\s+/)[0] ?? "";
+      const command = line.replace(/^\d+\s+/, "");
+      if (!command.startsWith(prefix)) return false;
+      const [executable = ""] = command.slice(prefix.length).split(/\s+/);
       return path.basename(executable).startsWith("7z");
     });
 }

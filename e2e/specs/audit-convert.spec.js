@@ -11,6 +11,7 @@ import {
   confirmDialogTitles,
   dispatchDocumentKey,
   domText,
+  dismissToasts,
   openBrowseArchive,
   queueConfirmResult,
   queueDialogResult,
@@ -20,6 +21,7 @@ import {
   waitForArchiveIdle,
   waitForE2eHook,
   waitForMainWindow,
+  waitForToastContaining,
 } from "../helpers/ui-driver.js";
 import { writeEvidence } from "../helpers/recovery-harness.js";
 
@@ -182,6 +184,41 @@ async function sampleProgressUntil(
 
 function percentLinesOf(seen) {
   return [...seen].filter((line) => /\d+%/.test(line));
+}
+
+function makePlainSource(name, payload, archiveName) {
+  const dir = path.join(ROOT, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "hello.txt"), payload);
+  const archive = path.join(dir, archiveName);
+  run7z(sidecar, ["a", "-t7z", "-y", archive, "--", "hello.txt"], {
+    cwd: dir,
+  });
+  return archive;
+}
+
+function replaceArchiveFile(from, target) {
+  const staged = `${target}.sync-staged`;
+  fs.copyFileSync(from, staged);
+  fs.renameSync(staged, target);
+}
+
+async function managedTempSnapshot() {
+  const reserved = await browser.executeAsync((done) => {
+    window.__TAURI__.core
+      .invoke("reserve_temp_extract_path")
+      .then((value) => done({ value }))
+      .catch((err) => done({ error: String(err) }));
+  });
+  if (reserved.error) {
+    throw new Error(`reserve_temp_extract_path failed: ${reserved.error}`);
+  }
+  const base = path.dirname(reserved.value);
+  return {
+    reserved: reserved.value,
+    entries: fs.existsSync(base) ? fs.readdirSync(base).sort() : [],
+  };
 }
 
 describe("audit convert and add-files flows", function () {
@@ -429,6 +466,78 @@ describe("audit convert and add-files flows", function () {
       listWithPasswordShowsHello: /^Path = hello\.txt$/m.test(withPassword),
       passwordInLog: String(await domText("#log")).includes(SEVEN_PASSWORD),
     });
+  });
+
+  async function assertConvertAbortsWhenSourceReplaced(slug, replacement) {
+    const archive = makePlainSource(`identity-${slug}`, PAYLOAD, "source.7z");
+    const dest = path.join(ROOT, `identity-${slug}`, "converted.7z");
+    await dismissToasts();
+    await openBrowseArchive(archive, "hello.txt");
+    const titlesBefore = (await confirmDialogTitles()).length;
+    const tempBefore = await managedTempSnapshot();
+
+    await clickBrowseConvert();
+    await waitForConvertDialog();
+    replaceArchiveFile(replacement, archive);
+    await queueDialogResult(dest);
+    await submitConvertDialog();
+
+    await waitForConvertDialogClosed();
+    await waitForArchiveIdle();
+    const toasts = await waitForToastContaining(
+      "changed since it was opened",
+      "replaced source did not show the changed-archive toast",
+    );
+    const asked = await titlesSince(titlesBefore);
+    assert.deepEqual(
+      asked,
+      [],
+      "replaced source should stop before any prompt",
+    );
+    assert.equal(
+      fs.existsSync(dest),
+      false,
+      "replaced source wrote an archive",
+    );
+    const tempAfter = await managedTempSnapshot();
+    assert.equal(
+      fs.existsSync(tempAfter.reserved),
+      false,
+      "replaced source created the reserved extract path",
+    );
+    assert.deepEqual(
+      tempAfter.entries,
+      tempBefore.entries,
+      "replaced source left a staging directory in the convert root",
+    );
+
+    writeEvidence(EVIDENCE_DIR, `audit-convert-identity-${slug}`, {
+      scenario: `audit-convert-identity-${slug}`,
+      archive,
+      replacement,
+      dest,
+      toastMatched: toasts.some((line) =>
+        line.includes("changed since it was opened"),
+      ),
+      outputWritten: fs.existsSync(dest),
+      confirmationTitles: asked,
+      tempEntriesBefore: tempBefore.entries.length,
+      tempEntriesAfter: tempAfter.entries.length,
+    });
+  }
+
+  it("aborts before extracting when the source is replaced by a plain archive while the options dialog is open", async () => {
+    const replacement = makePlainSource(
+      "identity-plain-replacement",
+      `${PAYLOAD}replaced after the dialog opened\n`,
+      "replacement.7z",
+    );
+    await assertConvertAbortsWhenSourceReplaced("plain", replacement);
+  });
+
+  it("aborts before extracting when the source is replaced by an encrypted archive while the options dialog is open", async () => {
+    const replacement = makeEncryptedSource("identity-encrypted-replacement");
+    await assertConvertAbortsWhenSourceReplaced("encrypted", replacement);
   });
 
   it("shows a percent while a large convert runs in Power", async () => {

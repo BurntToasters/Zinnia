@@ -120,13 +120,13 @@ export function listE2eOnlyAvailableNames(root = REPO_ROOT) {
 }
 
 /**
- * Value for ZINNIA_E2E_BACKGROUND, or null for foreground. Local macOS runs
+ * Value for ZINNIA_E2E_BACKGROUND, or null for foreground. Local Windows and macOS runs
  * default to background; CI and ZINNIA_E2E_FOREGROUND=1 keep the foreground.
  * See scripts/e2e-background.failure-modes.md.
  */
 export function e2eBackgroundValue({ env, platform }) {
   if (env.ZINNIA_E2E_BACKGROUND !== undefined) return env.ZINNIA_E2E_BACKGROUND;
-  if (platform !== "darwin") return null;
+  if (platform !== "darwin" && platform !== "win32") return null;
   if (env.ZINNIA_E2E_FOREGROUND === "1") return null;
   const ci = (env.CI ?? "").trim().toLowerCase();
   if (ci !== "" && ci !== "false" && ci !== "0") return null;

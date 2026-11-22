@@ -23,7 +23,11 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.7.0-beta.3:`
 
-- **Fix:** (add release notes)
+- **Security:** Convert stops if the archive changes on disk after you open the Convert options. Before this fix, a file replaced by a sync client could be converted without being checked, and an encrypted replacement could be written as an unencrypted copy without asking.
+- **Linux:** AppImage updates write the new AppImage beside the installed one and replace it in one step. An interrupted update no longer leaves the launch path without an AppImage.
+- **macOS:** The updater compares build numbers as well as versions, so it refuses an older beta of the same release.
+- **macOS:** Each installed copy of Zinnia keeps its own update backup. Updating one copy no longer deletes the recovery backup of another copy in the same folder.
+- **Codebase:** Updated Tauri to 2.12.7, Wry to 0.57.3, Tao to 0.37.3, `@tauri-apps/api` to 2.12.5, and `lucide` to 1.76.0.
 
 ## Changes in `v0.7.0-beta.2:`
 

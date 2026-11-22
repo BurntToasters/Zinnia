@@ -623,6 +623,7 @@ export async function convertArchive(): Promise<void> {
   }
 
   let sourceEncrypted: boolean;
+  let sourceIdentity: string;
   try {
     const [validation] = await ensureArchivePaths(
       [archive],
@@ -633,7 +634,8 @@ export async function convertArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
-    const info = await sourceArchiveInfo(archive, validation.identity);
+    sourceIdentity = validation.identity;
+    const info = await sourceArchiveInfo(archive, sourceIdentity);
     if (!info) {
       // Browse has already said why. A cancel is not an error to repeat.
       if (!state.cancelRequested) {
@@ -714,6 +716,14 @@ export async function convertArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
+    if (validation.identity !== sourceIdentity) {
+      showToast(
+        "The archive changed since it was opened. Open it again, then convert it.",
+        "error",
+        0,
+      );
+      return;
+    }
     // Reserve a managed leaf without creating it. The extraction backend can
     // then publish the completed stage by rename instead of copying into an
     // already-created empty conversion directory.
@@ -735,12 +745,7 @@ export async function convertArchive(): Promise<void> {
     debugLogCommand(extractArgs);
     const extract = await withLiveProgress(() => {
       sevenZipStarted = true;
-      return runWithPasswordRetry(
-        extractArgs,
-        true,
-        "Extract",
-        validation.identity,
-      );
+      return runWithPasswordRetry(extractArgs, true, "Extract", sourceIdentity);
     });
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);

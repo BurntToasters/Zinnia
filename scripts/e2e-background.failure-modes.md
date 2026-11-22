@@ -1,6 +1,6 @@
 # E2E background mode: failure modes
 
-`scripts/test-e2e.js` sets `ZINNIA_E2E_BACKGROUND=1` for local macOS runs so the
+`scripts/test-e2e.js` sets `ZINNIA_E2E_BACKGROUND=1` for local Windows and macOS runs so the
 E2E app never takes focus, never comes to the foreground, and its window stays
 below other apps. Rust reads the flag through `launch::e2e_background`
 (`src-tauri/src/launch/mod.rs`) and gates the window builders, the focus calls,
@@ -14,8 +14,9 @@ and the activation-policy switches in `launch/extract_window.rs`,
    mode even on a local Mac.
 3. An explicit `ZINNIA_E2E_BACKGROUND` value is overwritten. A value the caller
    set (`1` or `0`) must win over the default.
-4. Windows or Linux runs get the flag. Only macOS implements the mode; Linux
-   already has the Xvfb path, and Windows is unchanged.
+4. Local Windows windows activate when WebDriver launches or clicks them. Create
+   main, extract and debug-console windows without activation and keep them
+   unfocusable during background runs. Linux uses the existing Xvfb path.
 5. `CI` set to an empty string is not CI. An empty `CI` must not turn off the
    local default.
 6. `CI=false` or `CI=0` is not CI. Those values must not turn off the local
@@ -24,7 +25,7 @@ and the activation-policy switches in `launch/extract_window.rs`,
    environment before the first launch, so the main, extract-window, crash and
    recovery, and scenario specs all inherit it.
 8. The Rust side needs both the flag and an E2E session. `e2e_background` requires
-   `ZINNIA_E2E=1` and macOS, so a dev or release binary launched by hand with
+   `ZINNIA_E2E=1` and Windows or macOS, so a dev or release binary launched by hand with
    `ZINNIA_E2E_BACKGROUND=1` behaves as before. Release builds compile the gate
    out entirely.
 9. Extract-window activation switching. `restore_foreground_activation` switches
@@ -54,3 +55,6 @@ and the activation-policy switches in `launch/extract_window.rs`,
     count so a short run cannot pass on zero samples.
 15. The release build gets the behavior unchanged. All Rust changes are behind
     the `e2e` Cargo feature, which production builds never enable.
+16. The cancel-race 7-Zip leak check counts only 7-Zip processes whose executable
+    runs from this checkout. Concurrent runs from other checkouts or a system-wide
+    7-Zip cannot fail it.

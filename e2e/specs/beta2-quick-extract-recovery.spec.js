@@ -48,6 +48,7 @@ function denyWriteToFolder(dir) {
   if (process.platform === "win32") {
     execFileSync("icacls", [dir, "/deny", "*S-1-1-0:(WD,AD)"], {
       stdio: "ignore",
+      windowsHide: true,
     });
     return;
   }
@@ -65,6 +66,7 @@ function restoreFolderWrite(dir) {
   if (process.platform === "win32") {
     execFileSync("icacls", [dir, "/remove:d", "*S-1-1-0"], {
       stdio: "ignore",
+      windowsHide: true,
     });
     return;
   }
