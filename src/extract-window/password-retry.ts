@@ -1,4 +1,7 @@
-import { looksLikePasswordRequiredError } from "../error-hints";
+import {
+  isClosedStdinPasswordRejection,
+  looksLikePasswordRequiredError,
+} from "../error-hints";
 import { withPassword } from "../password-args";
 import { invokeRun7z, type Run7zRequest } from "../archive/backend-ipc";
 import { assertRunResult } from "../utils";
@@ -22,6 +25,14 @@ interface Run7zResult {
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
   ioDiagnostics?: import("../archive/backend-ipc").ArchiveIoDiagnostics;
+  passwordRequired?: boolean;
+}
+
+function isPasswordRequiredResult(result: Run7zResult): boolean {
+  return (
+    result.passwordRequired === true ||
+    looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
+  );
 }
 
 async function invokeExtractRun(
@@ -51,8 +62,8 @@ async function invokeExtractRunForPassword(
     const detail = error instanceof Error ? error.message : String(error);
     // Header encryption can make backend safety listing request a password
     // before extraction returns a normal Run7zResult.
-    if (!looksLikePasswordRequiredError("", detail)) throw error;
-    return { stdout: "", stderr: detail, code: 255 };
+    if (!isClosedStdinPasswordRejection(detail)) throw error;
+    return { stdout: "", stderr: detail, code: 255, passwordRequired: true };
   }
 }
 
@@ -73,10 +84,7 @@ export async function runWithPasswordRetry(
   );
   // A password that was already sent is known to be wrong when 7-Zip asks again.
   let passwordSent = false;
-  while (
-    result.code > 1 &&
-    looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
-  ) {
+  while (result.code > 1 && isPasswordRequiredResult(result)) {
     if (shouldAbort() || signal?.aborted) {
       return result;
     }

@@ -348,6 +348,7 @@ describe("workspace and density", () => {
     expect(invoke).toHaveBeenCalledWith("set_workspace_window_fx", {
       enabled: true,
       dark: true,
+      followSystem: true,
     });
 
     state.currentSettings.basicWindowEffects = false;
@@ -356,6 +357,7 @@ describe("workspace and density", () => {
     expect(invoke).toHaveBeenCalledWith("set_workspace_window_fx", {
       enabled: false,
       dark: true,
+      followSystem: true,
     });
   });
 

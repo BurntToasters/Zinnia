@@ -77,8 +77,25 @@ function readMachOMinimumVersion(binary, arch) {
   return match[1];
 }
 
-function verifyMachOCompatibility(binary) {
-  for (const arch of ["x86_64", "arm64"]) {
+function readMachOArchitectures(binary) {
+  const output = execFileSync("lipo", ["-archs", binary], {
+    encoding: "utf8",
+  });
+  const architectures = output.trim().split(/\s+/).filter(Boolean);
+  if (architectures.length === 0) {
+    throw new Error(`Could not read architectures for ${binary}`);
+  }
+  return architectures;
+}
+
+function verifyMachOCompatibility(binary, architectures) {
+  const present = readMachOArchitectures(binary);
+  for (const arch of architectures) {
+    if (!present.includes(arch)) {
+      throw new Error(
+        `${path.basename(binary)} is missing ${arch}, which the main app binary provides`,
+      );
+    }
     const minos = readMachOMinimumVersion(binary, arch);
     if (compareVersions(minos, requiredMacOS) > 0) {
       throw new Error(
@@ -196,9 +213,11 @@ if (marketingVersion !== expectedMarketingVersion) {
   );
 }
 
-verifyMachOCompatibility(path.join(appPath, "Contents", "MacOS", "zinnia"));
+const hostBinaryPath = path.join(appPath, "Contents", "MacOS", "zinnia");
+const hostArchitectures = readMachOArchitectures(hostBinaryPath);
+verifyMachOCompatibility(hostBinaryPath, hostArchitectures);
 const sidecarPath = path.join(appPath, "Contents", "MacOS", "7z");
-verifyMachOCompatibility(sidecarPath);
+verifyMachOCompatibility(sidecarPath, hostArchitectures);
 
 const finderSyncAppex = path.join(
   appPath,
@@ -213,6 +232,7 @@ if (!fs.existsSync(finderSyncAppex)) {
 }
 verifyMachOCompatibility(
   path.join(finderSyncAppex, "Contents", "MacOS", "ZinniaFinderSync"),
+  hostArchitectures,
 );
 execFileSync(
   "codesign",

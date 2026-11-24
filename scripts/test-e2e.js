@@ -40,6 +40,7 @@ export { reserveE2eWebdriverPort };
 
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
+import { requireHostSidecar, run7z } from "./archive-fixtures.js";
 
 const EXTRACT_WINDOW_AUTO_CLOSE_SECONDS = 10;
 // Crash launches are retried only for a startup timeout before #app (see runRecoveryScenarios).
@@ -111,6 +112,7 @@ export function listE2eOnlyAvailableNames(root = REPO_ROOT) {
   const names = [
     "main",
     "extract-window",
+    "extract-window-encrypted",
     "crash-injection",
     "crash-recovery",
     ...plan.crashCases.map((testCase) => testCase.id),
@@ -180,6 +182,7 @@ export function resolveE2eOnlySelection(tokens, root = REPO_ROOT) {
     filter: [...tokens],
     runMain: false,
     runExtractWindow: false,
+    runExtractWindowEncrypted: false,
     crashCaseIds: new Set(),
     runAllCrashLaunches: false,
     runAllCrashRecoveries: false,
@@ -193,6 +196,10 @@ export function resolveE2eOnlySelection(tokens, root = REPO_ROOT) {
     }
     if (bare === "extract-window") {
       selection.runExtractWindow = true;
+      continue;
+    }
+    if (bare === "extract-window-encrypted") {
+      selection.runExtractWindowEncrypted = true;
       continue;
     }
     const crashCase = plan.crashCases.find(
@@ -1338,6 +1345,61 @@ async function main() {
         processCleanup,
       );
       extractSuite.status = "passed";
+    }
+    if (only?.runExtractWindowEncrypted) {
+      // Header-encrypted 7z: the safety listing must hit the password prompt.
+      const encryptedDir = path.join(
+        profile.work,
+        "extract-window-encrypted-case",
+      );
+      fs.mkdirSync(encryptedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(encryptedDir, profile.manifest.payloadFile),
+        profile.manifest.payloadText,
+      );
+      const encryptedArchive = path.join(encryptedDir, "encrypted-headers.7z");
+      run7z(
+        requireHostSidecar(),
+        [
+          "a",
+          "-t7z",
+          "-mx=5",
+          "-mhe=on",
+          "-psecret",
+          encryptedArchive,
+          "--",
+          profile.manifest.payloadFile,
+        ],
+        { cwd: encryptedDir },
+      );
+      const encryptedEvidenceDir = path.join(
+        reportDir,
+        "extract-window-encrypted-evidence",
+      );
+      fs.rmSync(encryptedEvidenceDir, { recursive: true, force: true });
+      fs.mkdirSync(encryptedEvidenceDir, { recursive: true });
+      const encryptedWebdriver = await reserveE2eWebdriverPort();
+      const encryptedSuite = {
+        spec: "./specs/extract-window-encrypted.spec.js",
+        status: "failed",
+        logFile: path.join(reportDir, "extract-window-encrypted.log"),
+      };
+      suites.push(encryptedSuite);
+      await runWdio(
+        profile,
+        encryptedSuite.spec,
+        ["--extract", encryptedArchive],
+        reportDir,
+        {
+          ZINNIA_E2E_HEADER_ENCRYPTED_7Z: encryptedArchive,
+          ZINNIA_E2E_EVIDENCE_DIR: encryptedEvidenceDir,
+          TAURI_WEBDRIVER_PORT: String(encryptedWebdriver.port),
+        },
+        encryptedWebdriver,
+        processCleanup,
+        "extract-window-encrypted.log",
+      );
+      encryptedSuite.status = "passed";
     }
     if (recoveryScenariosScheduled(only)) {
       await runRecoveryScenarios({ reportDir, suites, processCleanup, only });

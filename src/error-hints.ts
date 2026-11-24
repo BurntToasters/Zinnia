@@ -22,6 +22,19 @@ export function looksLikePasswordRequiredError(
   );
 }
 
+const CLOSED_STDIN_PROMPT_PATTERN = /\bbreak signaled\b/i;
+
+/**
+ * True when a rejected backend listing was a password prompt that 7-Zip could
+ * not answer because stdin is closed ("Break signaled" on stderr).
+ */
+export function isClosedStdinPasswordRejection(detail: string): boolean {
+  return (
+    looksLikePasswordRequiredError("", detail) ||
+    CLOSED_STDIN_PROMPT_PATTERN.test(detail)
+  );
+}
+
 // 7-Zip 26.06 prints "Cannot open the file as [7z] archive" and "Is not
 // archive" for files it cannot read as an archive. Older builds used "can not".
 const NOT_AN_ARCHIVE_PATTERNS: readonly RegExp[] = [

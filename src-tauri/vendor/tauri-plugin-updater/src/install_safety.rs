@@ -301,6 +301,62 @@ pub fn is_cross_device(err: &std::io::Error) -> bool {
     }
 }
 
+/// Owns the staged temp path and removes it unless it was renamed into place.
+struct StagedTempFile {
+    path: PathBuf,
+    persisted: bool,
+}
+
+impl Drop for StagedTempFile {
+    fn drop(&mut self) {
+        if !self.persisted {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Creates a new `0600` file in `parent` with a unique name. `create_new`
+/// never follows or reuses an existing entry, so a collision only retries.
+fn create_staged_file(parent: &Path) -> std::io::Result<(std::fs::File, StagedTempFile)> {
+    static NEXT_STAGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    const ATTEMPTS: usize = 16;
+    for _ in 0..ATTEMPTS {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let counter = NEXT_STAGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = parent.join(format!(
+            ".zinnia-staged-{}-{}-{}",
+            std::process::id(),
+            nanos,
+            counter
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => {
+                let staged = StagedTempFile {
+                    path,
+                    persisted: false,
+                };
+                return Ok((file, staged));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique staged file",
+    ))
+}
+
 pub(crate) fn replace_file_atomically<F>(dest: &Path, write: F) -> std::io::Result<()>
 where
     F: FnOnce(&mut std::fs::File) -> std::io::Result<()>,
@@ -316,17 +372,16 @@ where
             "destination directory does not exist",
         ));
     }
-    let mut staged = tempfile::Builder::new()
-        .prefix(".zinnia-staged-")
-        .tempfile_in(parent)?;
-    write(staged.as_file_mut())?;
-    staged.as_file().sync_all()?;
+    let (mut staged_file, mut staged) = create_staged_file(parent)?;
+    write(&mut staged_file)?;
+    staged_file.sync_all()?;
     match std::fs::metadata(dest) {
-        Ok(metadata) => staged.as_file().set_permissions(metadata.permissions())?,
+        Ok(metadata) => staged_file.set_permissions(metadata.permissions())?,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => return Err(err),
     }
-    staged.persist(dest).map_err(|err| err.error)?;
+    std::fs::rename(&staged.path, dest)?;
+    staged.persisted = true;
     Ok(())
 }
 

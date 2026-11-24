@@ -18,6 +18,7 @@ import {
   outputPathForFormatChange,
   resolveOutputArchiveAutofill,
   resolveExtractDestinationAutofill,
+  looksLikeWindowsPath,
 } from "../extract-path";
 import { getCompressionSecuritySupport } from "../compression-security";
 import { hideBasicCompletion, hideBasicProgress } from "./progress";
@@ -609,7 +610,11 @@ function renderDestinationRow(
     if (value === "") output.removeAttribute("title");
     else output.title = value;
   }
-  const sep = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
+  const sep = Math.max(
+    value.lastIndexOf("/"),
+    looksLikeWindowsPath(value) ? value.lastIndexOf("\\") : -1,
+  );
   if (folder)
     folder.textContent = value !== "" && sep > 0 ? value.slice(0, sep) : "";
   if (name) {

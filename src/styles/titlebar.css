@@ -8,6 +8,7 @@
   color: var(--text);
   font-size: 0.75rem;
   font-weight: 500;
+  -webkit-user-select: none;
   user-select: none;
   border-bottom: 1px solid var(--border);
   position: relative;

@@ -165,6 +165,7 @@
   font-size: var(--basic-font);
   color: var(--text);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -274,6 +275,7 @@
   cursor: pointer;
   font-size: var(--basic-label);
   font-weight: 600;
+  -webkit-user-select: none;
   user-select: none;
   list-style: none;
   display: flex;

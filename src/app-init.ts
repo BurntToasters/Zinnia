@@ -11,7 +11,6 @@ import {
   applyTheme,
   loadSettingsWithMetadata,
   applySettingsToForm,
-  openSettingsModal,
 } from "./settings";
 import {
   log,
@@ -31,9 +30,8 @@ import {
   updateCompressionOptionsForFormat,
   onCompressionOptionChange,
 } from "./presets";
-import { checkUpdates, autoCheckUpdates } from "./updater";
-import { openLicensesModal } from "./licenses";
-import { openExternalUrl } from "./external-links";
+import { autoCheckUpdates } from "./updater";
+import { handleAppMenuAction } from "./app-menu";
 import { refreshQuickActionRepeatState } from "./quick-actions";
 import { isE2eFrontend } from "./e2e-env";
 import { shouldShowSetupWizard } from "./setup-wizard";
@@ -58,11 +56,7 @@ import {
   listenForStopRequests,
   setDetectedCpuCount,
 } from "./window-events";
-import {
-  wireEvents,
-  openShortcutsModal,
-  runSetupWizardFlow,
-} from "./power-events";
+import { wireEvents, runSetupWizardFlow } from "./power-events";
 import { MAX_ARCHIVE_PATHS } from "./archive-rules";
 import { installE2eHookIfEnabled } from "./e2e-hook";
 import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
@@ -248,6 +242,11 @@ function wireTitlebar(): void {
   void syncMaximizeLabel().catch(reportTitlebarError);
 }
 
+/** File manager that hands paths to Zinnia on this platform, for log text. */
+function fileManagerName(): string {
+  return state.platformName === "macos" ? "Finder" : "Explorer";
+}
+
 export async function init() {
   installNativeWebviewContextMenuGuard();
   await installE2eHookIfEnabled();
@@ -262,12 +261,12 @@ export async function init() {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log(`Failed to read pending Explorer paths: ${msg}`, "error");
+      log(`Failed to read pending ${fileManagerName()} paths: ${msg}`, "error");
       return;
     }
     for (const batch of batches) {
       if (batch.paths.length > 0) {
-        await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
+        await applyIncomingPaths(batch.paths, batch.mode, fileManagerName());
       }
     }
   }
@@ -277,36 +276,24 @@ export async function init() {
       if (!uiReadyForOpenPaths) return;
       openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+        log(
+          `Failed to process incoming ${fileManagerName()} paths: ${msg}`,
+          "error",
+        );
       });
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
+    log(
+      `Failed to subscribe to ${fileManagerName()} open events: ${msg}`,
+      "error",
+    );
   }
 
   try {
     await listen<string>("app-menu", (event) => {
       const action = typeof event.payload === "string" ? event.payload : "";
-      switch (action) {
-        case "menu-settings":
-          openSettingsModal();
-          break;
-        case "menu-check-updates":
-          void checkUpdates();
-          break;
-        case "menu-shortcuts":
-          openShortcutsModal();
-          break;
-        case "menu-licenses":
-          openLicensesModal();
-          break;
-        case "menu-support":
-          void openExternalUrl("https://rosie.run/support");
-          break;
-        default:
-          break;
-      }
+      handleAppMenuAction(action);
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -566,7 +553,10 @@ export async function init() {
   // Drain any paths that queued up while we were initializing
   openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
-    log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+    log(
+      `Failed to process incoming ${fileManagerName()} paths: ${msg}`,
+      "error",
+    );
   });
   await openPathsQueue;
   await shellHandoffError;

@@ -20,7 +20,11 @@ interface PathParts {
   separator: "/" | "\\";
 }
 
-function looksLikeWindowsPath(path: string): boolean {
+/**
+ * True for drive-letter and UNC paths. Only these treat `\` as a separator;
+ * on POSIX (macOS, Linux) `\` is a legal file name character.
+ */
+export function looksLikeWindowsPath(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
 }
 
@@ -192,7 +196,9 @@ export function deriveBatchExtractParent(inputs: readonly string[]): string {
   const parents = inputs.map((raw) => splitPathParts(normalizeInputPath(raw)));
   if (parents.length === 0 || parents.some((parts) => !parts.parent)) return "";
   const { separator } = parents[0];
-  const [first, ...rest] = parents.map((parts) => parts.parent.split(/[\\/]/));
+  const [first, ...rest] = parents.map((parts) =>
+    parts.parent.split(looksLikeWindowsPath(parts.parent) ? /[\\/]/ : /\//),
+  );
   let shared = 0;
   while (
     shared < first.length &&
@@ -237,6 +243,27 @@ export function resolveExtractDestinationAutofill(
 // Output archive path autofill (compress / add mode)
 // ---------------------------------------------------------------------------
 
+/** POSIX system areas (macOS and Linux) that are read-only for users. */
+const POSIX_PROTECTED_PREFIXES = [
+  "/system/",
+  "/library/",
+  "/usr/",
+  "/bin/",
+  "/sbin/",
+];
+
+function isPreferredPosixCompressParent(parent: string): boolean {
+  const normalized = `${parent.replace(/\/+$/, "").toLowerCase()}/`;
+  if (
+    POSIX_PROTECTED_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+  ) {
+    return false;
+  }
+  // Inside an app bundle (…/Foo.app/Contents/…), not the bundle folder itself.
+  if (/\.app\/[^/]/.test(normalized)) return false;
+  return true;
+}
+
 /**
  * True when `parent` is a reasonable default save location for a new archive.
  * Start Menu shortcuts, Program Files, and other protected Windows folders
@@ -244,6 +271,8 @@ export function resolveExtractDestinationAutofill(
  */
 export function isPreferredCompressParent(parent: string): boolean {
   if (!parent) return false;
+  if (!looksLikeWindowsPath(parent))
+    return isPreferredPosixCompressParent(parent);
   const normalized = parent.replace(/\//g, "\\").toLowerCase();
   if (normalized.includes("\\start menu\\")) return false;
   if (normalized.includes("\\program files")) return false;

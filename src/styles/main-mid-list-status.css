@@ -44,6 +44,7 @@
   padding: 12px 10px;
   font-size: 0.75rem;
   text-align: center;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -92,6 +93,7 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   flex-shrink: 0;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -240,6 +242,7 @@ body.platform-macos .btn--shortcut::after {
   font-size: 0.75rem;
   color: var(--text-secondary);
   padding: 0;
+  -webkit-user-select: none;
   user-select: none;
   flex-shrink: 0;
   overflow: hidden;

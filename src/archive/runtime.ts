@@ -18,6 +18,7 @@ import {
 } from "../output-logging";
 import {
   describe7zError,
+  isClosedStdinPasswordRejection,
   looksLikePasswordRequiredError,
 } from "../error-hints";
 import { promptPassword, type PasswordPromptOutcome } from "../prompt-modal";
@@ -280,15 +281,6 @@ function cancelledRunResult(): Run7zResult {
 function archivePathFromArgs(args: string[]): string {
   const separator = args.indexOf("--");
   return separator === -1 ? "" : (args[separator + 1] ?? "");
-}
-
-const CLOSED_STDIN_PROMPT_PATTERN = /\bbreak signaled\b/i;
-
-function isClosedStdinPasswordRejection(detail: string): boolean {
-  return (
-    looksLikePasswordRequiredError("", detail) ||
-    CLOSED_STDIN_PROMPT_PATTERN.test(detail)
-  );
 }
 
 function isPasswordRequiredResult(result: Run7zResult): boolean {

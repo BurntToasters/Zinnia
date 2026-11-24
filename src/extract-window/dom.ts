@@ -1,3 +1,4 @@
+import { looksLikeWindowsPath } from "../extract-path";
 import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
@@ -10,7 +11,11 @@ export function $(id: string): HTMLElement {
 }
 
 export function parentDir(filePath: string): string {
-  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
+  const sep = Math.max(
+    filePath.lastIndexOf("/"),
+    looksLikeWindowsPath(filePath) ? filePath.lastIndexOf("\\") : -1,
+  );
   if (sep < 0) return ".";
   if (sep === 0) return "/";
   const parent = filePath.slice(0, sep);

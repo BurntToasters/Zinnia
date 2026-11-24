@@ -90,6 +90,7 @@
 .basic-home__sep {
   color: var(--text-secondary);
   opacity: 0.55;
+  -webkit-user-select: none;
   user-select: none;
 }
 

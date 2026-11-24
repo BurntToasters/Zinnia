@@ -39,7 +39,11 @@ describe("external links", () => {
       "utf8",
     );
     expect(appInit).not.toMatch(/wireExternalLinkClicks/);
-    expect(appInit).toMatch(
+    const appMenu = fs.readFileSync(
+      path.resolve(process.cwd(), "src", "app-menu.ts"),
+      "utf8",
+    );
+    expect(appMenu).toMatch(
       /openExternalUrl\("https:\/\/rosie\.run\/support"\)/,
     );
   });

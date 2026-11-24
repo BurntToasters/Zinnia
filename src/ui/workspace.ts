@@ -144,6 +144,27 @@ export function getWorkspaceMode(): WorkspaceMode {
   return mode === "power" ? "power" : "basic";
 }
 
+const FULLSCREEN_EXIT_WAIT_MS = 1000;
+const FULLSCREEN_EXIT_POLL_MS = 50;
+
+/**
+ * Waits, bounded by FULLSCREEN_EXIT_WAIT_MS, for native fullscreen to end.
+ * macOS animates out of fullscreen, and resize or unmaximize requests sent
+ * during that animation are dropped.
+ */
+async function waitForFullscreenExit(
+  appWindow: ReturnType<typeof getCurrentWebviewWindow>,
+): Promise<boolean> {
+  const deadline = Date.now() + FULLSCREEN_EXIT_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (!(await appWindow.isFullscreen())) return true;
+    await new Promise((resolve) =>
+      window.setTimeout(resolve, FULLSCREEN_EXIT_POLL_MS),
+    );
+  }
+  return !(await appWindow.isFullscreen());
+}
+
 export async function resizeWorkspaceWindow(
   mode: WorkspaceMode,
 ): Promise<void> {
@@ -169,6 +190,24 @@ export async function resizeWorkspaceWindow(
 
       try {
         if (!resizable) {
+          try {
+            if (
+              typeof appWindow.isFullscreen === "function" &&
+              typeof appWindow.setFullscreen === "function" &&
+              (await appWindow.isFullscreen())
+            ) {
+              await appWindow.setFullscreen(false);
+              const exited = await waitForFullscreenExit(appWindow);
+              if (!exited) {
+                devLog("Window still fullscreen after the exit wait");
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            devLog(
+              `Unable to leave fullscreen before locking basic window: ${msg}`,
+            );
+          }
           try {
             if (
               typeof appWindow.isMaximized === "function" &&

@@ -59,6 +59,11 @@
   flex: 0 0 auto;
 }
 
+/* Overlay titlebar traffic lights sit at the top-left; keep text clear of them. */
+body.platform-macos .startup-recovery-banner {
+  padding-left: 84px;
+}
+
 *,
 *::before,
 *::after {

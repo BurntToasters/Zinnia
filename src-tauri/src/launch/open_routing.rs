@@ -441,8 +441,15 @@ where
         paths.push(path);
     }
 
+    let mode = resolve_open_mode(&paths, mode);
+    (paths, mode)
+}
+
+/// Mode selection shared by argv and Finder/`RunEvent::Opened` opens so both
+/// entry points pick the same mode for the same paths.
+pub(crate) fn resolve_open_mode(paths: &[String], mut mode: String) -> String {
     if mode == "compress" {
-        return (paths, mode);
+        return mode;
     }
 
     if mode != "extract"
@@ -452,11 +459,11 @@ where
         mode = "extract".to_string();
     }
 
-    if should_use_extract_window(&paths, &mode) || mode == "extract-explicit" {
+    if should_use_extract_window(paths, &mode) || mode == "extract-explicit" {
         mode = "extract".to_string();
     }
 
-    (paths, mode)
+    mode
 }
 
 pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) -> bool {
@@ -577,7 +584,8 @@ pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
         .map(|path| path.to_string_lossy().to_string())
         .collect();
 
-    let _ = route_open_request(app, paths, String::new());
+    let mode = resolve_open_mode(&paths, String::new());
+    let _ = route_open_request(app, paths, mode);
 }
 
 /// A second instance forwards its argv to this process, whose working

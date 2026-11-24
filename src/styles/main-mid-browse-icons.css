@@ -42,6 +42,7 @@
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-strong);
   white-space: nowrap;
+  -webkit-user-select: none;
   user-select: none;
 }
 

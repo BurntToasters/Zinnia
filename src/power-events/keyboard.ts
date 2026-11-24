@@ -10,7 +10,7 @@ import {
 import { closeLicensesModal } from "../licenses";
 import { getMode, getWorkspaceMode } from "../ui";
 import { getBasicView, syncBasicBeforeRun, type BasicView } from "../basic";
-import { isEditableTarget } from "../power-helpers";
+import { isBlockingModalOpen, isEditableTarget } from "../power-helpers";
 import { openShortcutsModal, closeShortcutsModal } from "../power-shortcuts";
 
 const BASIC_PRIMARY_RUN_BUTTON_IDS: Partial<Record<BasicView, string>> = {
@@ -35,7 +35,7 @@ export function wireGlobalKeyboardEvents(): void {
       }
       return;
     }
-    if (!$("input-modal-overlay").hidden) {
+    if (isBlockingModalOpen()) {
       if (e.key === "Escape") {
         return;
       }

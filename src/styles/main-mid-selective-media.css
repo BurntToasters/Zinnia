@@ -133,6 +133,7 @@
   font-size: 0.75rem;
   background: var(--surface);
   list-style: none;
+  -webkit-user-select: none;
   user-select: none;
   transition: background var(--transition);
 }

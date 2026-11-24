@@ -659,8 +659,13 @@ describe("beta 2 Basic destination: Save to and Extract to rows", function () {
 
   it("shows Choose where to save for a protected source and Add files first with no files", async () => {
     const started = Date.now();
+    // macOS has no Windows folders; use a read-only system area instead.
+    const protectedRoot =
+      process.platform === "darwin"
+        ? "/System/Library"
+        : (process.env.SystemRoot ?? "C:\\Windows");
     const protectedFile = path.join(
-      process.env.SystemRoot ?? "C:\\Windows",
+      protectedRoot,
       "zinnia-e2e-missing-source",
       "locked.txt",
     );

@@ -1,6 +1,15 @@
 import { $ } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 
+/**
+ * True while the input/rename modal or the setup wizard owns the screen. The
+ * global shortcuts and native menu actions for Settings, Shortcuts and
+ * Licenses stay closed until it is dismissed.
+ */
+export function isBlockingModalOpen(): boolean {
+  return !$("setup-wizard-overlay").hidden || !$("input-modal-overlay").hidden;
+}
+
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;

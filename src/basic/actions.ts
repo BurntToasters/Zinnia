@@ -30,6 +30,7 @@ import {
   archiveExtensionForFormat,
   isPreferredCompressParent,
   fallbackCompressParent,
+  looksLikeWindowsPath,
 } from "../extract-path";
 import {
   getBasicView,
@@ -67,7 +68,11 @@ async function confirmBasicDrop(
 }
 
 function parentDirForPath(path: string): string {
-  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
+  const sep = Math.max(
+    path.lastIndexOf("/"),
+    looksLikeWindowsPath(path) ? path.lastIndexOf("\\") : -1,
+  );
   if (sep < 0) return path;
   if (sep === 0) return "/";
   const parent = path.slice(0, sep);
@@ -359,14 +364,14 @@ async function handleBasicCompressActionOnce(
   if (state.inputs[0]) {
     const parent = parentDirForPath(state.inputs[0]);
     if (parent && isPreferredCompressParent(parent)) {
-      const sep = state.inputs[0].includes("\\") ? "\\" : "/";
+      const sep = looksLikeWindowsPath(state.inputs[0]) ? "\\" : "/";
       defaultPath = parent.endsWith(sep)
         ? `${parent}Archive.${outputExtension}`
         : `${parent}${sep}Archive.${outputExtension}`;
     } else {
       const fallback = fallbackCompressParent(state.inputs[0]);
       if (fallback) {
-        const sep = fallback.includes("\\") ? "\\" : "/";
+        const sep = looksLikeWindowsPath(fallback) ? "\\" : "/";
         defaultPath = `${fallback}${sep}Archive.${outputExtension}`;
       }
     }
