@@ -101,7 +101,8 @@ async function assertProcessStopped(pid) {
 // - release-scale evidence omits schemaVersion 3 or did not alternate measurement order.
 // - promotion-grade direct or Zinnia measurements omit, truncate, or contain negative/non-finite warmups;
 // - symbolic baseline refs move after checkout, causing child metadata, report identity, or assertions to disagree;
-// - scheduled or manually dispatched archive runs retain a symbolic baseline ref after checkout.
+// - manually dispatched archive runs retain a symbolic baseline ref after checkout;
+// - the benchmark workflow regains a schedule and spends hosted minutes without a manual dispatch.
 
 function workflowSteps(job) {
   const lines = job.split(/\r?\n/);
@@ -800,10 +801,10 @@ test("promotion-grade measurements require exact valid warmup samples", () => {
   );
 });
 
-test("scheduled and manual baseline runs pin the checked-out SHA once", () => {
+test("manual baseline runs pin the checked-out SHA once", () => {
   const workflow = read(".github/workflows/archive-io-benchmark.yml");
   const script = read("scripts/run-archive-io-benchmark.mjs");
-  assert.match(workflow, /schedule:/);
+  assert.doesNotMatch(workflow, /schedule:/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /inputs\.baseline_ref \|\| 'main'/);
   assert.match(script, /pinBaselineCheckoutRevision/);
@@ -1267,9 +1268,9 @@ test("archive benchmark checkout ref agrees with candidate metadata", () => {
   assert.match(benchmarkJob, /fetch-depth:\s*0/);
 });
 
-test("nightly archive benchmark covers all hosted architectures", () => {
+test("manual archive benchmark covers all hosted architectures", () => {
   const workflow = read(".github/workflows/archive-io-benchmark.yml");
-  assert.match(workflow, /cron: ['"]17 9 \* \* \*['"]/);
+  assert.doesNotMatch(workflow, /cron:/);
   assert.match(workflow, /workflow_dispatch:/);
   for (const runner of [
     "ubuntu-latest",

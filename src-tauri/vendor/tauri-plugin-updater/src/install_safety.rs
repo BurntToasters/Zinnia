@@ -1220,7 +1220,7 @@ mod tests {
         {
             let resolved = resolve_trusted_system_helper("sh").expect("sh should exist");
             assert!(
-                resolved == PathBuf::from("/bin/sh") || resolved == PathBuf::from("/usr/bin/sh"),
+                resolved == Path::new("/bin/sh") || resolved == Path::new("/usr/bin/sh"),
                 "hostile PATH must not change trusted helper resolution, got {resolved:?}"
             );
         }
@@ -1236,9 +1236,7 @@ mod tests {
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"WAYLAND_DISPLAY"));
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"DBUS_SESSION_BUS_ADDRESS"));
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"XDG_RUNTIME_DIR"));
-        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST
-            .iter()
-            .any(|key| *key == "PATH"));
+        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"PATH"));
     }
 
     #[cfg(unix)]
@@ -1448,7 +1446,7 @@ mod tests {
         let resolved =
             resolve_trusted_system_helper("sh").expect("sh should exist as a root helper");
         assert!(
-            resolved == PathBuf::from("/bin/sh") || resolved == PathBuf::from("/usr/bin/sh"),
+            resolved == Path::new("/bin/sh") || resolved == Path::new("/usr/bin/sh"),
             "unexpected sh path {resolved:?}"
         );
         assert!(unix_helper_is_trusted(&resolved));

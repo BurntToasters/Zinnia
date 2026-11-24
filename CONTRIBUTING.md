@@ -51,11 +51,28 @@ which points git at the tracked [`.githooks`](.githooks) directory.
 
 ## CI and merge expectations
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on PRs to `main` and
-`beta`, then runs again on pushes to those branches to prove the exact
-post-merge tip. Feature-branch pushes with an open PR are not run twice. The
-workflow includes Windows/macOS Rust checks, every supported platform/CPU
-compile smoke, and `npm audit`/`cargo audit` security checks.
+To save hosted Actions minutes, CI runs only for `main` and `beta`. No other
+branch triggers CI on its own.
+
+| Workflow | Runs when |
+| --- | --- |
+| [`ci.yml`](.github/workflows/ci.yml) | Pushes to `main` or `beta`, and pull requests that target `main` or `beta` |
+| [`release-policy.yml`](.github/workflows/release-policy.yml) | Pull requests that target `main` |
+| [`7z-watch.yml`](.github/workflows/7z-watch.yml) | Weekly on `main` (one 15-minute Linux job), or by hand |
+| [`archive-io-benchmark.yml`](.github/workflows/archive-io-benchmark.yml) | By hand only (**Actions > Archive I/O benchmark > Run workflow**) |
+
+Pushing a feature branch (for example `next-0.7.0`) runs nothing. To run CI
+for a feature branch, open a pull request into `main` or `beta`. Keep new
+workflows on these branches. Do not add `push` triggers for other branches,
+`branches: ["**"]`, or new schedules unless the minutes are budgeted. The
+archive benchmark uses six runners, including two macOS runners billed at 10x,
+so run it only when you need a performance comparison.
+
+`ci.yml` runs on PRs to `main` and `beta`, then runs again on pushes to those
+branches to prove the exact post-merge tip. Feature-branch pushes with an open
+PR are not run twice. The workflow includes Windows/macOS Rust checks, every
+supported platform/CPU compile smoke, and `npm audit`/`cargo audit` security
+checks.
 
 The `main` and `beta` branches intentionally have no branch protection. The
 `beta` branch may be deleted and recreated. Pull request review and hosted CI

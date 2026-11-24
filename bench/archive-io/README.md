@@ -70,7 +70,7 @@ node bench/archive-io/compare.mjs --candidate candidate.json --base baseline.jso
 The comparison command writes JSON and Markdown, and appends to `GITHUB_STEP_SUMMARY` when set.
 Use `--allow-missing-candidate` only for direct-only rollout diagnostics. Use `--output-dir` or
 `ZINNIA_BENCH_REPORT_DIR` for CI artifact output. Omitted commands remain `n/a`, never fake
- numbers. Pass `--compatibility` (used by the nightly workflow) to measure the tracked RAR
+ numbers. Pass `--compatibility` (used by the benchmark workflow) to measure the tracked RAR
  fixture, generated split volumes, password-bearing fixture, and a generated TAR whose listing
  must contain non-empty `Hard Link =` or `Symbolic Link =` metadata before timing starts. Link
  preservation is host-gated: a host that cannot create or preserve the link is reported as
