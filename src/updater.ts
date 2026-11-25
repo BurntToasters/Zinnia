@@ -74,7 +74,7 @@ async function touchUpdateReservation(): Promise<void> {
 
 /**
  * Persistent status-bar button. Status text alone is overwritten too easily.
- * The Basic header copy mirrors it, but only while Basic is the workspace.
+ * The Basic banner copy mirrors it, but only while Basic is the workspace.
  */
 function renderUpdateReadyIndicator(
   version: string | null,

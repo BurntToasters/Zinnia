@@ -7,7 +7,6 @@ import {
 } from "../state";
 import {
   getMode,
-  getWorkspaceMode,
   hideProgress,
   log,
   setBrowsePasswordFieldVisible,
@@ -287,18 +286,21 @@ export async function browseArchive(
     setStatus("Listing archive contents");
     if (isDebugEnabled()) debugLog(`Listing archive: ${archive}`);
     debugLogCommand(args);
-    // Power prompts once for a password-required listing and retries. Basic
-    // keeps its own browse password field, so its failure stays in that flow.
+    // Prompt once for a password-required listing and retry in both modes.
+    // Cancelling the prompt in Basic reveals the inline browse password field.
     const passwordCarry = { value: password };
     browsedArchivePassword = null;
     const result = await runWithPasswordRetry(
       args,
-      getWorkspaceMode() !== "basic",
+      true,
       "Browse",
       listingIdentity,
       passwordCarry,
     );
     if (state.cancelRequested) {
+      if (result.passwordRequired) {
+        setBrowsePasswordFieldVisible(true);
+      }
       setStatus("Cancelled", 2000);
       return null;
     }

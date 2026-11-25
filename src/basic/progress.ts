@@ -404,7 +404,11 @@ export function updateBasicRunningState(active: boolean): void {
 
   updateBasicInteractionLock(active || state.operationPreparing);
   const browsing = getMode() === "browse";
-  for (const id of ["basic-browse-extract-all", "basic-browse-test"]) {
+  for (const id of [
+    "basic-browse-extract-all",
+    "basic-browse-test",
+    "basic-browse-unlock",
+  ]) {
     const button = document.getElementById(id) as HTMLButtonElement | null;
     if (button) button.disabled = active || state.operationPreparing;
   }

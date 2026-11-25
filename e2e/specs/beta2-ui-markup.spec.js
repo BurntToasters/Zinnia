@@ -482,7 +482,7 @@ describe("beta2 ui markup: progress announcer, card names, method options, short
     });
   });
 
-  it("renders a hidden, named Basic update button in the header strip", async () => {
+  it("renders a hidden, named Basic update banner inside the Basic workspace", async () => {
     await startIdle();
     const indicator = await browser.execute(() => {
       const el = document.getElementById("basic-update-indicator");
@@ -495,6 +495,7 @@ describe("beta2 ui markup: progress announcer, card names, method options, short
         hidden: el.hidden,
         display: getComputedStyle(el).display,
         name: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+        inBasicWorkspace: el.closest("#basic-workspace") !== null,
         inHeaderStrip: el.closest(".header__actions") !== null,
       };
     });
@@ -507,9 +508,14 @@ describe("beta2 ui markup: progress announcer, card names, method options, short
     assert.equal(indicator.display, "none");
     assert.ok(indicator.name.length > 0, "the update button has no name");
     assert.equal(
-      indicator.inHeaderStrip,
+      indicator.inBasicWorkspace,
       true,
-      "the update button is outside the header strip",
+      "the update banner is outside #basic-workspace",
+    );
+    assert.equal(
+      indicator.inHeaderStrip,
+      false,
+      "the update banner is still inside the header strip",
     );
 
     writeEvidence(EVIDENCE_DIR, "beta2-ui-markup-update-indicator", {

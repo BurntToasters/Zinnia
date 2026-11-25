@@ -1,4 +1,4 @@
-import { $, isImeComposing } from "../utils";
+import { $, isImeComposing, markKeyHandled } from "../utils";
 import { state } from "../state";
 import { setMode, renderInputs } from "../ui";
 import { applyPreset } from "../presets";
@@ -114,8 +114,15 @@ export function wireBasicExtractEvents(): void {
   browsePassword?.addEventListener("change", syncBasicBrowsePasswordToPower);
   browsePassword?.addEventListener("keydown", (event) => {
     if (isImeComposing(event)) return;
-    if (event.key === "Enter") void runBasicBrowseArchive();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      markKeyHandled(event);
+      void runBasicBrowseArchive();
+    }
   });
+  document
+    .getElementById("basic-browse-unlock")
+    ?.addEventListener("click", () => void runBasicBrowseArchive());
   document
     .getElementById("basic-toggle-extract-password")
     ?.addEventListener("click", () => {

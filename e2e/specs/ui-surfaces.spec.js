@@ -254,9 +254,21 @@ describe("ui surfaces", function () {
   });
 
   it("swaps the Basic browse password toggle between eye and eye-off icons", async () => {
-    await openBasicBrowseForArchive(ARCHIVE);
+    await openBasicBrowseForArchive(ARCHIVE, { waitForIdle: false });
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () =>
+            document.getElementById("input-modal-overlay")?.hidden === false,
+        ),
+      {
+        timeout: 60_000,
+        timeoutMsg:
+          "Basic browse did not open the password prompt for the encrypted archive",
+      },
+    );
     await browser.execute(() => {
-      document.getElementById("basic-browse-contents")?.click();
+      document.getElementById("input-modal-cancel")?.click();
     });
     await browser.waitUntil(
       () =>
@@ -267,7 +279,7 @@ describe("ui surfaces", function () {
       {
         timeout: 60_000,
         timeoutMsg:
-          "Basic browse did not reveal the password field for the encrypted archive",
+          "Basic browse did not reveal the password field after cancelling the prompt",
       },
     );
 

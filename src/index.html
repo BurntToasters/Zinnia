@@ -159,14 +159,6 @@
             ></div>
           </div>
           <button
-            type="button"
-            class="btn btn--ghost btn--sm update-ready-indicator"
-            id="basic-update-indicator"
-            hidden
-          >
-            Update ready
-          </button>
-          <button
             class="btn btn--ghost btn--sm"
             id="toggle-density"
             aria-pressed="false"
@@ -1543,6 +1535,14 @@
 
       <main id="main-content">
         <div id="basic-workspace" class="basic-workspace">
+          <button
+            type="button"
+            class="btn btn--ghost btn--sm update-ready-indicator basic-update-banner"
+            id="basic-update-indicator"
+            hidden
+          >
+            Update ready
+          </button>
           <div class="basic-toolbar" id="basic-toolbar" hidden>
             <button
               class="basic-toolbar__back"
@@ -2286,6 +2286,7 @@
                 <input
                   id="basic-browse-password"
                   type="password"
+                  placeholder="Enter password to list contents"
                   spellcheck="false"
                   autocorrect="off"
                   autocapitalize="off"
@@ -2299,6 +2300,13 @@
                   aria-pressed="false"
                 >
                   <i data-lucide="eye" class="lucide-icon"></i>
+                </button>
+                <button
+                  type="button"
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-browse-unlock"
+                >
+                  Unlock
                 </button>
               </div>
             </div>

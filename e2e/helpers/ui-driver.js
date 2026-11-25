@@ -44,6 +44,19 @@ export async function applyIncomingPaths(paths, mode) {
   if (error) throw new Error(String(error));
 }
 
+export async function startIncomingPaths(paths, mode) {
+  await waitForE2eHook();
+  await browser.execute(
+    (nextPaths, nextMode) => {
+      window.__ZINNIA_E2E__
+        .applyIncomingPaths(nextPaths, nextMode)
+        .catch(() => undefined);
+    },
+    paths,
+    mode,
+  );
+}
+
 export async function queueDialogResult(result) {
   await waitForE2eHook();
   await browser.execute((next) => {
@@ -882,14 +895,21 @@ export async function clickBasicRecentArchive(archivePath) {
   }, leaf);
 }
 
-export async function openBasicBrowseForArchive(archive) {
+export async function openBasicBrowseForArchive(
+  archive,
+  { waitForIdle = true } = {},
+) {
   await switchToBasicWorkspace();
   await waitForArchiveIdle();
   await browser.execute(() => {
     document.getElementById("clear-inputs")?.click();
   });
   await waitForInputListCleared();
-  await applyIncomingPaths([archive], "");
+  if (waitForIdle) {
+    await applyIncomingPaths([archive], "");
+  } else {
+    await startIncomingPaths([archive], "");
+  }
   const leaf = path.basename(archive);
   await browser.waitUntil(
     async () => {

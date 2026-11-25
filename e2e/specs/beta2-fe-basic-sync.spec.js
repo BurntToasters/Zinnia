@@ -679,7 +679,14 @@ describe("beta 2 Basic sync, Basic run keys and Basic failure panels", function 
     const dest = path.join(ROOT, "browse-extract-handoff", "out");
     mkdirFresh(dest);
 
-    await openBasicBrowseForArchive(archive);
+    await openBasicBrowseForArchive(archive, { waitForIdle: false });
+    await browser.waitUntil(() => isInputModalOpen(), {
+      timeout: STEP_TIMEOUT_MS,
+      timeoutMsg: `Basic Browse did not open the password prompt; ${await uiDiagnostics()}`,
+    });
+    await browser.execute(() => {
+      document.getElementById("input-modal-cancel")?.click();
+    });
     await browser.waitUntil(
       () =>
         browser.execute(
@@ -689,9 +696,10 @@ describe("beta 2 Basic sync, Basic run keys and Basic failure panels", function 
         ),
       {
         timeout: STEP_TIMEOUT_MS,
-        timeoutMsg: `Basic Browse did not ask for the password; ${await uiDiagnostics()}`,
+        timeoutMsg: `Basic Browse did not reveal the inline password field after cancel; ${await uiDiagnostics()}`,
       },
     );
+    await waitForArchiveIdle();
     await setInputValue("#basic-browse-password", PASSWORD);
     await dispatchKeyOnField("basic-browse-password", "Enter", false);
     await browser.waitUntil(

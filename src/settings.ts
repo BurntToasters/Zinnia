@@ -446,7 +446,7 @@ export function openSettingsModal() {
     const activeTab = modal.querySelector<HTMLElement>(
       ".settings-tab.is-active",
     );
-    activeTab?.focus();
+    activeTab?.focus({ preventScroll: true });
   }
 }
 

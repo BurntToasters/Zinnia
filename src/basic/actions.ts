@@ -503,6 +503,7 @@ export async function isArchiveEncrypted(
 
 async function handleBasicExtractActionOnce(
   preparation: BasicPreparation,
+  typedBrowsePassword?: string,
 ): Promise<void> {
   const archive = state.inputs[0];
   if (!archive) {
@@ -559,7 +560,7 @@ async function handleBasicExtractActionOnce(
     );
   }
   // Reuse the password that opened this archive in Browse, if it still matches.
-  let password = (await carriedPassword) ?? "";
+  let password = (await carriedPassword) ?? typedBrowsePassword ?? "";
   if (!isBasicPreparationCurrent(preparation)) return;
 
   if (encryptionCheck === true && !password) {
@@ -648,14 +649,16 @@ async function handleBasicExtractActionOnce(
   await runAction();
 }
 
-export async function handleBasicExtractAction(): Promise<void> {
+export async function handleBasicExtractAction(
+  typedBrowsePassword?: string,
+): Promise<void> {
   const preparation = beginBasicPreparation();
   if (!preparation) return;
   try {
     // runAction clears the password fields once 7-Zip has started. Clearing
     // here would also erase the password on pre-run errors. Only an unexpected
     // rejection clears them, since no run can be trusted to have done so.
-    await handleBasicExtractActionOnce(preparation);
+    await handleBasicExtractActionOnce(preparation, typedBrowsePassword);
   } catch (err) {
     clearPasswordFields();
     throw err;

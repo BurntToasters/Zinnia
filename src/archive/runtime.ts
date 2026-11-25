@@ -397,7 +397,7 @@ export async function runWithPasswordRetry(
     }
     if (state.cancelRequested || outcome.kind === "cancel") {
       state.cancelRequested = true;
-      return cancelledRunResult();
+      return { ...cancelledRunResult(), passwordRequired: true };
     }
     if (passwordCarry) passwordCarry.value = outcome.value;
     setStatus("Retrying with password");

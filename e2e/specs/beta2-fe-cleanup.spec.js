@@ -144,15 +144,6 @@ async function resetForScenario() {
   await clearPowerExtractSession();
 }
 
-async function countEncryptedListingNotices() {
-  return browser.execute(
-    () =>
-      (document.getElementById("log")?.textContent ?? "").split(
-        "Archive appears to be encrypted",
-      ).length - 1,
-  );
-}
-
 function e2eProfileDir() {
   const home = process.env.HOME ?? process.env.USERPROFILE;
   if (!home) throw new Error("E2E profile home env is missing");
@@ -247,31 +238,12 @@ describe("beta2 frontend cleanup regressions", function () {
     const extracted = path.join(dest, "basic-a.txt");
 
     await resetForScenario();
-    const noticesBefore = await countEncryptedListingNotices();
-    await openBasicBrowseForArchive(archive);
-    await browser.waitUntil(
-      async () => (await countEncryptedListingNotices()) > noticesBefore,
-      {
-        timeout: EXTRACT_TIMEOUT_MS,
-        timeoutMsg: `Basic auto-browse never reported the encrypted listing; ${await uiDiagnostics()}`,
-      },
-    );
-    await waitForBasicBrowseStatusIdle(
-      "Basic browse did not settle before the password",
-    );
-    await browser.execute((password) => {
-      const field = document.getElementById("basic-browse-password");
-      if (!field) throw new Error("missing #basic-browse-password");
-      field.value = password;
-      field.dispatchEvent(new Event("change", { bubbles: true }));
-      field.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }, PASSWORD_A);
+    await openBasicBrowseForArchive(archive, { waitForIdle: false });
+    await browser.waitUntil(() => isInputModalOpen(), {
+      timeout: EXTRACT_TIMEOUT_MS,
+      timeoutMsg: `Basic auto-browse did not prompt for the encrypted archive password; ${await uiDiagnostics()}`,
+    });
+    await confirmInputModal(PASSWORD_A);
     await waitForListingMember(
       "basic-a.txt",
       "Basic browse with the password did not list members",

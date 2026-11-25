@@ -429,16 +429,39 @@ function readSkipLinkCover() {
 function readIndicatorStyle() {
   return browser.execute(() => {
     const el = document.getElementById("basic-update-indicator");
+    const header = document.querySelector(".header");
+    const workspace = document.getElementById("basic-workspace");
+    const power = document.getElementById("workspace-mode-power");
+    const support = document.getElementById("support-link");
+    const box = (node) => {
+      const r = node.getBoundingClientRect();
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        left: r.left,
+        right: r.right,
+        width: r.width,
+        height: r.height,
+      };
+    };
     const originallyHidden = el.hidden;
+    const originalText = el.textContent;
+    el.textContent = "Update 0.7.0-beta.3 available. Click to install";
     el.hidden = false;
     const shown = getComputedStyle(el);
     const visible = {
       display: shown.display,
       height: shown.height,
       whiteSpace: shown.whiteSpace,
+      rect: box(el),
+      headerRect: box(header),
+      workspaceRect: box(workspace),
+      powerRect: box(power),
+      supportRect: box(support),
     };
     el.hidden = true;
     const hidden = { display: getComputedStyle(el).display };
+    el.textContent = originalText;
     el.hidden = originallyHidden;
     return { visible, hidden };
   });
@@ -802,15 +825,26 @@ describe("beta 2 styles Basic: Browse layout, states, disabled controls, feedbac
     });
   });
 
-  it("sizes the Basic update indicator like a header button and hides it with the hidden attribute", async () => {
+  it("renders the Basic update banner below the titlebar without overlapping header controls and hides it with hidden", async () => {
     const started = Date.now();
     await switchToBasicWorkspace();
     await waitForArchiveIdle();
     const style = await readIndicatorStyle();
 
     assert.notEqual(style.visible.display, "none", "the indicator is hidden");
-    assert.equal(style.visible.height, "30px");
-    assert.equal(style.visible.whiteSpace, "nowrap");
+    assert.ok(
+      style.visible.rect.height >= 30,
+      `expected banner height >= 30, got ${style.visible.rect.height}`,
+    );
+    assert.ok(
+      style.visible.rect.top >= style.visible.headerRect.bottom - 1,
+      `update banner (${style.visible.rect.top}) overlapped titlebar (${style.visible.headerRect.bottom})`,
+    );
+    assert.ok(
+      style.visible.rect.left >= style.visible.workspaceRect.left - 1 &&
+        style.visible.rect.right <= style.visible.workspaceRect.right + 1,
+      `update banner (${style.visible.rect.left}..${style.visible.rect.right}) overflowed workspace (${style.visible.workspaceRect.left}..${style.visible.workspaceRect.right})`,
+    );
     assert.equal(
       style.hidden.display,
       "none",
@@ -931,6 +965,14 @@ describe("beta 2 styles Basic: Browse layout, states, disabled controls, feedbac
     try {
       await openSettingsModal();
       await browser.pause(400);
+      await browser.execute(() => {
+        const modal = document.querySelector(
+          "#settings-overlay .modal--settings",
+        );
+        for (const anim of modal?.getAnimations?.() ?? []) {
+          if (anim.playState === "running") anim.finish();
+        }
+      });
       layout = await readSettingsLayout();
     } finally {
       await closeSettingsModalViaUi().catch(() => undefined);

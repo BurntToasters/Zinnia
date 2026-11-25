@@ -163,7 +163,7 @@ export function trapFocus(container: HTMLElement): void {
   const first = Array.from(
     container.querySelectorAll<HTMLElement>(FOCUSABLE),
   ).find(isFocusCandidate);
-  if (first) first.focus();
+  if (first) first.focus({ preventScroll: true });
 }
 
 export function releaseFocusTrap(container: HTMLElement): void {

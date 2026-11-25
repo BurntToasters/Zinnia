@@ -474,37 +474,12 @@ describe("Archive operation flows", function () {
       { "hello.txt": PAYLOAD },
       { password: PASSWORD, headers: true },
     );
-    await openBasicBrowseForArchive(archive);
-    // Basic keeps its own browse password field: the failed listing reveals it.
-    await clickId("basic-browse-contents");
-    await browser.waitUntil(
-      () =>
-        browser.execute(() => {
-          const field = document.getElementById("basic-browse-password-field");
-          return field !== null && !field.hidden;
-        }),
-      {
-        timeout: 60_000,
-        timeoutMsg: "Basic browse did not reveal the password field",
-      },
+    await openBasicBrowseForArchive(archive, { waitForIdle: false });
+    await waitForInputModalLabel(
+      "encrypted",
+      "Basic browse did not prompt for the header-encrypted archive password",
     );
-    await waitForArchiveIdle();
-    await setInputValue("#basic-browse-password", PASSWORD);
-    // Earlier browses leave rows in these tables; clear them so the wait below
-    // only passes for the listing this click starts.
-    await browser.execute(() => {
-      for (const id of ["basic-browse-tbody", "browse-tbody"]) {
-        document.getElementById(id)?.replaceChildren();
-      }
-    });
-    // The Browse button hides and clears this field; Enter browses with it.
-    await browser.execute(() => {
-      document
-        .getElementById("basic-browse-password")
-        ?.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-        );
-    });
+    await confirmInputModal(PASSWORD);
     try {
       await browser.waitUntil(
         async () =>
@@ -522,6 +497,11 @@ describe("Archive operation flows", function () {
           `toasts=${JSON.stringify(toasts)}; passwordLength=${String(pwLength ?? "").length}`,
       );
     }
+    const toasts = await toastTexts();
+    assert.ok(
+      !toasts.some((line) => line.includes("Failed to list archive contents")),
+      `Basic browse raised an error toast before/after prompting: ${toasts.join(" | ")}`,
+    );
     await waitForArchiveIdle();
 
     await clickId("basic-browse-extract-all");

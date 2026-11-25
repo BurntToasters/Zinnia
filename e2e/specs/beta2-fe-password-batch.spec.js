@@ -224,15 +224,6 @@ async function resetForScenario() {
   await clearPowerExtractSession();
 }
 
-async function countEncryptedListingNotices() {
-  return browser.execute(
-    () =>
-      (document.getElementById("log")?.textContent ?? "").split(
-        "Archive appears to be encrypted",
-      ).length - 1,
-  );
-}
-
 async function startTimelineRecording() {
   await browser.execute(() => {
     window.__e3Timeline = [];
@@ -453,34 +444,13 @@ describe("beta2 frontend password retry and batch extract", function () {
 
     await resetForScenario();
     await startTimelineRecording();
-    const noticesBefore = await countEncryptedListingNotices();
-    await openBasicBrowseForArchive(archive);
-    await browser.waitUntil(
-      async () => (await countEncryptedListingNotices()) > noticesBefore,
-      {
-        timeout: EXTRACT_TIMEOUT_MS,
-        timeoutMsg: `Basic auto-browse never reported the encrypted listing; ${await uiDiagnostics()}`,
-      },
-    );
-    await recordTimeline("auto-browse notice seen");
-    await waitForBasicBrowseStatusIdle(
-      "Basic browse did not settle before the password",
-    );
-    await recordTimeline("basic browse idle before password");
-    await recordTimeline("typed password and Enter");
-    await browser.execute((password) => {
-      const field = document.getElementById("basic-browse-password");
-      if (!field) throw new Error("missing #basic-browse-password");
-      field.value = password;
-      field.dispatchEvent(new Event("change", { bubbles: true }));
-      field.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }, PASSWORD_A);
+    await openBasicBrowseForArchive(archive, { waitForIdle: false });
+    await browser.waitUntil(() => isInputModalOpen(), {
+      timeout: EXTRACT_TIMEOUT_MS,
+      timeoutMsg: `Basic auto-browse did not prompt for the encrypted archive password; ${await uiDiagnostics()}`,
+    });
+    await recordTimeline("auto-browse password prompt seen");
+    await confirmInputModal(PASSWORD_A);
     await waitForListingMember(
       "basic-a.txt",
       "Basic browse with the password did not list members",

@@ -13,12 +13,18 @@ export function wireBasicBrowseEvents(): void {
   if (extractAllBtn) {
     extractAllBtn.addEventListener("click", () => {
       const browsed = currentBrowsedArchivePassword();
+      const typedPassword =
+        (
+          document.getElementById(
+            "basic-browse-password",
+          ) as HTMLInputElement | null
+        )?.value ?? "";
       setMode("extract");
       if (browsed?.archive && browsed.archive === state.inputs[0]) {
         restoreBrowsedArchivePassword(browsed);
       }
       setBasicView("extract");
-      void handleBasicExtractAction();
+      void handleBasicExtractAction(typedPassword || undefined);
     });
   }
 
