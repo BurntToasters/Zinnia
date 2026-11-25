@@ -341,6 +341,16 @@ function positiveTimeout(value, fallback = STARTUP_TIMEOUT_MS) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function isCompleteWrapperIdentity(identity, pid) {
+  return Boolean(
+    identity &&
+    identity.pid === pid &&
+    typeof identity.created === "string" &&
+    identity.created &&
+    identity.created !== "undefined",
+  );
+}
+
 function closeServer(server) {
   if (!server.listening) return Promise.resolve();
   return new Promise((resolve) => server.close(() => resolve()));
@@ -371,6 +381,8 @@ export async function startWindowsFencedCommand(command, args, options = {}) {
   const payloadPath = path.join(directory, "command.json");
   const token = randomBytes(32).toString("hex");
   const startupTimeoutMs = positiveTimeout(options.startupTimeoutMs);
+  const identityTimeoutMs = positiveTimeout(options.identityTimeoutMs, 5_000);
+  const readProcessTable = options.readWindowsProcessTable;
   const payload = {
     command,
     args,
@@ -507,6 +519,62 @@ export async function startWindowsFencedCommand(command, args, options = {}) {
     );
     let releasePromise;
     let disposePromise;
+    let identityAttempts = 0;
+    const resolveWrapperIdentity = async (candidate) => {
+      if (isCompleteWrapperIdentity(candidate, child.pid)) return candidate;
+      if (candidate && candidate.pid !== child.pid) {
+        throw new Error(
+          `wrapper identity pid ${candidate.pid} does not match spawned wrapper pid ${child.pid}`,
+        );
+      }
+      if (typeof readProcessTable !== "function") {
+        throw new Error(
+          `wrapper identity was not captured for pid ${child.pid}: no process-table reader was passed to the Windows fenced launcher`,
+        );
+      }
+      const deadline = Date.now() + identityTimeoutMs;
+      let lastCreated =
+        typeof candidate?.created === "string" ? candidate.created : null;
+      let lastError = null;
+      for (;;) {
+        identityAttempts += 1;
+        try {
+          const table = await readProcessTable();
+          if (!Array.isArray(table)) {
+            lastError = "process table unavailable";
+          } else {
+            const row = table.find(
+              (processInfo) => Number(processInfo?.pid) === child.pid,
+            );
+            lastCreated =
+              typeof row?.created === "string" && row.created !== "undefined"
+                ? row.created
+                : null;
+            if (
+              isCompleteWrapperIdentity(
+                { pid: child.pid, created: lastCreated },
+                child.pid,
+              )
+            ) {
+              return { pid: child.pid, created: lastCreated };
+            }
+            lastError = row
+              ? "creation time missing from process snapshot"
+              : "wrapper process not present in snapshot";
+          }
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+        if (Date.now() >= deadline) break;
+        await new Promise((resolve) => {
+          const wait = setTimeout(resolve, 50);
+          wait.unref?.();
+        });
+      }
+      throw new Error(
+        `wrapper identity was not captured for pid ${child.pid} after ${identityAttempts} attempt(s) in ${identityTimeoutMs}ms (exit=${child.exitCode ?? "alive"}, signal=${child.signalCode ?? "none"}, lastCreated=${lastCreated ?? "none"}, lastError=${lastError ?? "none"})`,
+      );
+    };
     return {
       child,
       commandResult,
@@ -515,6 +583,14 @@ export async function startWindowsFencedCommand(command, args, options = {}) {
       },
       release(identity) {
         releasePromise ??= (async () => {
+          let exactIdentity;
+          try {
+            exactIdentity = await resolveWrapperIdentity(identity);
+          } catch (error) {
+            abortRequested = true;
+            if (channel && authenticated) sendControl("abort");
+            throw error;
+          }
           if (!authenticated) {
             let timeout;
             try {
@@ -544,12 +620,9 @@ export async function startWindowsFencedCommand(command, args, options = {}) {
             throw new Error("Windows launch was aborted before command start.");
           }
           try {
-            if (!identity || identity.pid !== child.pid || !identity.created) {
-              throw new Error("wrapper identity was not captured");
-            }
             await jobHelperReady;
             await jobHelper.request(
-              `assign ${identity.pid} ${identity.created}`,
+              `assign ${exactIdentity.pid} ${exactIdentity.created}`,
               startupTimeoutMs,
             );
           } catch (error) {

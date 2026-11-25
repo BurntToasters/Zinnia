@@ -1,19 +1,30 @@
 //! Compress-input tree probes (symlinks, app bundles, Windows cloud/junction reparse).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(windows, test))]
+use std::path::PathBuf;
 
+const MAX_COMPRESS_INPUTS: usize = 4096;
+#[cfg(any(windows, test))]
 const MAX_EXAMPLES: usize = 4;
+#[cfg(any(windows, test))]
 const MAX_PROBE_ENTRIES: u64 = 1_000_000;
+#[cfg(any(windows, test))]
 const MAX_PROBE_PATH_BYTES: u64 = 32 * 1024 * 1024;
+#[cfg(any(windows, test))]
 const MAX_PROBE_DEPTH: usize = 256;
+#[cfg(any(windows, test))]
 const MAX_PROBE_DURATION: std::time::Duration = std::time::Duration::from_secs(60);
 
+// The walk only feeds nested-reparse results, which only Windows consumes.
+#[cfg(any(windows, test))]
 struct ProbeBudget {
     entries: u64,
     path_bytes: u64,
     deadline: std::time::Instant,
 }
 
+#[cfg(any(windows, test))]
 impl ProbeBudget {
     fn new() -> Self {
         Self {
@@ -24,6 +35,7 @@ impl ProbeBudget {
     }
 }
 
+#[cfg(any(windows, test))]
 #[derive(Default, Clone, Debug)]
 struct CompressInputProbe {
     pub nested_symlinks: u32,
@@ -34,6 +46,7 @@ struct CompressInputProbe {
 
 /// Walk selected compress inputs (files/folders). Top-level symlink inputs are
 /// rejected elsewhere; this finds nested links and Windows non-symlink reparse.
+#[cfg(any(windows, test))]
 fn scan_compress_inputs_with_cancel<C>(
     paths: &[String],
     should_cancel: C,
@@ -41,7 +54,7 @@ fn scan_compress_inputs_with_cancel<C>(
 where
     C: Fn() -> bool + Sync,
 {
-    if paths.len() > 4096 {
+    if paths.len() > MAX_COMPRESS_INPUTS {
         return Err("Too many compress inputs to probe.".to_string());
     }
     // Keep one bounded metadata worker set for the whole operation.  The
@@ -64,6 +77,7 @@ where
     })
 }
 
+#[cfg(any(windows, test))]
 fn push_example(probe: &mut CompressInputProbe, path: &Path) {
     if probe.examples.len() >= MAX_EXAMPLES {
         return;
@@ -74,11 +88,13 @@ fn push_example(probe: &mut CompressInputProbe, path: &Path) {
     }
 }
 
+#[cfg(any(windows, test))]
 fn is_app_bundle_name(name: &std::ffi::OsStr) -> bool {
     name.to_str()
         .is_some_and(|s| s.len() > 4 && s.to_ascii_lowercase().ends_with(".app"))
 }
 
+#[cfg(any(windows, test))]
 struct PendingProbeEntry {
     path: PathBuf,
     is_root: bool,
@@ -86,12 +102,14 @@ struct PendingProbeEntry {
     accounted: bool,
 }
 
+#[cfg(any(windows, test))]
 const METADATA_BATCH_SIZE: usize = 64;
 
 #[cfg(test)]
 static METADATA_WORKERS_CREATED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
+#[cfg(any(windows, test))]
 struct MetadataJob {
     index: usize,
     path: PathBuf,
@@ -102,6 +120,7 @@ struct MetadataJob {
 /// instead of a new scoped thread group per directory batch.  The pool is
 /// deliberately private to one probe operation so its cancellation callback
 /// can remain borrowed and workers are joined by `thread::scope`.
+#[cfg(any(windows, test))]
 struct MetadataProbePool {
     queue: std::sync::Arc<(
         std::sync::Mutex<std::collections::VecDeque<Option<MetadataJob>>>,
@@ -111,6 +130,7 @@ struct MetadataProbePool {
     deadline: std::time::Instant,
 }
 
+#[cfg(any(windows, test))]
 impl MetadataProbePool {
     fn new<'scope, 'env, C>(
         scope: &'scope std::thread::Scope<'scope, 'env>,
@@ -217,6 +237,7 @@ impl MetadataProbePool {
     }
 }
 
+#[cfg(any(windows, test))]
 impl Drop for MetadataProbePool {
     fn drop(&mut self) {
         let (lock, wake) = &*self.queue;
@@ -229,6 +250,7 @@ impl Drop for MetadataProbePool {
     }
 }
 
+#[cfg(any(windows, test))]
 fn account_probe_entry<C>(
     path: &Path,
     depth: usize,
@@ -267,6 +289,7 @@ where
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn classify_link(
     path: &Path,
     is_root: bool,
@@ -298,6 +321,7 @@ fn classify_link(
     false
 }
 
+#[cfg(any(windows, test))]
 fn walk_path<C>(
     root: &Path,
     probe: &mut CompressInputProbe,
@@ -383,8 +407,10 @@ where
     Ok(())
 }
 
-/// Enforce one bounded, cancellable traversal across every selected root. On
-/// Windows, nested non-symlink reparse points additionally fail closed.
+/// Enforce the compress-input checks. On Windows this also runs one bounded,
+/// cancellable traversal and fails closed on nested non-symlink reparse points.
+/// Elsewhere the traversal result is never consumed, so only the top-level
+/// checks run.
 pub fn assert_compress_inputs_safe_with_cancel<C>(
     paths: &[String],
     should_cancel: C,
@@ -392,10 +418,10 @@ pub fn assert_compress_inputs_safe_with_cancel<C>(
 where
     C: Fn() -> bool + Sync,
 {
-    let probe = scan_compress_inputs_with_cancel(paths, should_cancel)?;
-    if probe.nested_reparse_points != 0 {
-        #[cfg(windows)]
-        {
+    #[cfg(windows)]
+    {
+        let probe = scan_compress_inputs_with_cancel(paths, should_cancel)?;
+        if probe.nested_reparse_points != 0 {
             let sample = probe
                 .examples
                 .first()
@@ -405,8 +431,26 @@ where
                 "Compress inputs contain a Windows reparse point (junction or cloud placeholder) that is not a symbolic link: {sample}. Copy the real files locally, or remove the reparse entry, then try again."
             ));
         }
+        Ok(())
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        if paths.len() > MAX_COMPRESS_INPUTS {
+            return Err("Too many compress inputs to probe.".to_string());
+        }
+        for raw in paths {
+            if should_cancel() {
+                return Err("Compress input scan was cancelled.".to_string());
+            }
+            std::fs::symlink_metadata(raw).map_err(|error| {
+                format!(
+                    "Unable to read compress input '{}': {error}",
+                    Path::new(raw).display()
+                )
+            })?;
+        }
+        Ok(())
+    }
 }
 
 /// Compatibility wrapper used by focused platform tests.

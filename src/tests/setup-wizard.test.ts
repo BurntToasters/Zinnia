@@ -12,7 +12,7 @@ const e2eEnv = vi.hoisted(() => ({
 }));
 vi.mock("../e2e-env", () => e2eEnv);
 
-const mockSaveSettings = vi.fn().mockResolvedValue(undefined);
+const mockPersistSettingsImmediately = vi.fn().mockResolvedValue(undefined);
 const mockApplyTheme = vi.fn();
 const mockRefreshDefaultArchiverActionButton = vi
   .fn()
@@ -20,8 +20,12 @@ const mockRefreshDefaultArchiverActionButton = vi
 const mockRunDefaultArchiverAction = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../settings", () => ({
-  saveSettings: (...args: unknown[]) => mockSaveSettings(...args),
   applyTheme: (...args: unknown[]) => mockApplyTheme(...args),
+}));
+
+vi.mock("../ui/workspace", () => ({
+  persistSettingsImmediately: (...args: unknown[]) =>
+    mockPersistSettingsImmediately(...args),
 }));
 
 vi.mock("../os-integration", () => ({
@@ -39,7 +43,7 @@ beforeEach(() => {
     "setup-wizard-overlay",
   ) as HTMLElement;
   overlay.hidden = true;
-  mockSaveSettings.mockClear();
+  mockPersistSettingsImmediately.mockClear();
   mockApplyTheme.mockClear();
   mockRefreshDefaultArchiverActionButton.mockClear();
   mockRunDefaultArchiverAction.mockClear();
@@ -68,7 +72,7 @@ describe("setup wizard state", () => {
     expect(state.currentSettings.setupComplete).toBe(true);
     expect(state.settingsExtras._setupComplete).toBeUndefined();
     expect(state.settingsExtras._setupWizardVersion).toBe(3);
-    expect(mockSaveSettings).toHaveBeenCalledOnce();
+    expect(mockPersistSettingsImmediately).toHaveBeenCalledOnce();
   });
 });
 

@@ -229,9 +229,17 @@ fn defer_exit_while_operation_finishes(
 ) -> bool {
     let facts = read_slot_facts(app);
     if !should_prevent_exit(&facts, exit_forced()) {
+        if app_menu::system_terminate_pending() {
+            // AppKit is waiting in NSTerminateLater. Hand termination back to
+            // the system instead of racing it with a Tauri exit.
+            api.prevent_exit();
+            app_menu::resolve_system_terminate(true);
+            return true;
+        }
         return false;
     }
     api.prevent_exit();
+    app_menu::bound_system_terminate_prompt(app);
     // An update reservation has no child to cancel. Do not mistake a
     // user/system Quit during installation for the later updater relaunch.
     // The frontend releases this reservation immediately before calling
@@ -414,7 +422,8 @@ fn main() {
                 // pluginkit can take several seconds when Launch Services is
                 // unhealthy. Registration is best-effort, so keep it off the
                 // setup/main thread and show the first window without waiting.
-                if production_integrations_enabled() {
+                if production_integrations_enabled() && !platform::running_from_app_translocation()
+                {
                     std::thread::spawn(platform::register_macos_finder_sync);
                 }
             }
@@ -526,6 +535,9 @@ fn main() {
             }
         }
         tauri::RunEvent::Opened { urls } => {
+            // Finder may hand the file to us just as the warm-idle timer is
+            // exiting. Invalidate any armed timer before routing the open.
+            launch::bump_extract_warm_idle_generation();
             emit_open_urls(app_handle, urls);
         }
         tauri::RunEvent::Reopen {

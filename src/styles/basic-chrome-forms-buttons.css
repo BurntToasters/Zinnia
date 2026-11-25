@@ -170,6 +170,7 @@
 }
 
 .basic-toggle input {
+  flex: 0 0 auto;
   margin: 0;
 }
 

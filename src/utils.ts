@@ -57,12 +57,15 @@ const isolationState = new Map<
   { count: number; wasInert: boolean }
 >();
 
-/** Surfaces that stay clickable above modal sheets. The titlebar and header go inert with the modal. */
+/**
+ * Surfaces that stay clickable above modal sheets. The titlebar and header go
+ * inert with the modal. The extract window's input modal is a sibling of
+ * `extract-app`, so its own field and Cancel stay reachable without keeping the
+ * background UI interactive.
+ */
 function keepInteractiveDuringModal(element: HTMLElement): boolean {
   return (
-    element.id === "extract-app" ||
-    element.id === "toast-region" ||
-    element.id === "startup-recovery-banner"
+    element.id === "toast-region" || element.id === "startup-recovery-banner"
   );
 }
 

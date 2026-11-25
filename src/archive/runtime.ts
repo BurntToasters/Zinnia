@@ -18,6 +18,7 @@ import {
 } from "../output-logging";
 import {
   describe7zError,
+  hasClosedStdinBreakSignal,
   isClosedStdinPasswordRejection,
   looksLikePasswordRequiredError,
 } from "../error-hints";
@@ -284,16 +285,24 @@ function archivePathFromArgs(args: string[]): string {
 }
 
 function isPasswordRequiredResult(result: Run7zResult): boolean {
-  return (
+  if (
     result.passwordRequired === true ||
     looksLikePasswordRequiredError(result.stdout, result.stderr)
-  );
+  ) {
+    return true;
+  }
+  if (result.code !== 2 && result.code !== 255) return false;
+  // With stdin closed, 7-Zip aborts a password prompt with "Break signaled" on
+  // stderr. Stderr is never truncated, so this is the only reliable signal.
+  // Truncated stdout alone says nothing about a password (CRC, disk-full, etc.).
+  return hasClosedStdinBreakSignal(result.stderr);
 }
 
 async function invokeRunForPasswordRetry(
   args: string[],
   expectedArchiveIdentity: string | undefined,
   convertPasswordRejection: boolean,
+  passwordAlreadySent = false,
 ): Promise<Run7zResult> {
   try {
     return await invokeGuardedRun7z(args, expectedArchiveIdentity);
@@ -301,8 +310,13 @@ async function invokeRunForPasswordRetry(
     const detail = error instanceof Error ? error.message : String(error);
     // Header-encrypted archives can fail backend member-safety listing before
     // `run_7z` has a normal result. Convert only a recognized password prompt
-    // into retry flow; all other backend errors remain rejected.
+    // into retry flow; all other backend errors remain rejected. Once a
+    // password was sent, a closed-stdin abort means the child that prompts
+    // cannot receive `-p` (e.g. a compound TAR), so re-prompting would loop.
     if (!convertPasswordRejection || !isClosedStdinPasswordRejection(detail)) {
+      throw error;
+    }
+    if (passwordAlreadySent && hasClosedStdinBreakSignal(detail)) {
       throw error;
     }
     return { stdout: "", stderr: detail, code: 255, passwordRequired: true };
@@ -347,6 +361,16 @@ export async function runWithPasswordRetry(
     if (state.cancelRequested || state.batchCancelled) {
       return result;
     }
+    // A password was already in the args, yet the same closed-stdin prompt
+    // aborted again. That child cannot receive `-p`, so prompting forever never
+    // succeeds; surface the failure instead.
+    if (passwordSent && hasClosedStdinBreakSignal(result.stderr)) {
+      log(
+        "The archive tool requested a password again after one was sent; the nested format cannot accept it.",
+        "error",
+      );
+      return result;
+    }
     setCancelAvailable(true);
     const abort = new AbortController();
     const cancelBtn = document.getElementById("cancel-action");
@@ -380,6 +404,7 @@ export async function runWithPasswordRetry(
     result = await invokeRunForPasswordRetry(
       withPassword(args, outcome.value),
       expectedArchiveIdentity,
+      true,
       true,
     );
     passwordSent = true;

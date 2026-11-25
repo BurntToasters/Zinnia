@@ -1185,9 +1185,9 @@ test("workflow Rust version derives from the pinned toolchain", () => {
   assert.ok(!workflow.includes(pinned));
   assert.equal(
     (workflow.match(/uses:\s*dtolnay\/rust-toolchain/g) ?? []).length,
-    6,
+    7,
   );
-  assert.equal((workflow.match(/id:\s*rust-pin/g) ?? []).length, 6);
+  assert.equal((workflow.match(/id:\s*rust-pin/g) ?? []).length, 7);
   assert.match(workflow, /shell:\s*bash/);
   assert.match(workflow, /node scripts\/rust-toolchain\.mjs/);
   assert.match(workflow, /echo "version=\$version" >> "\$GITHUB_OUTPUT"/);

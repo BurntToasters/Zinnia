@@ -240,6 +240,20 @@ export function setMode(
   }
 }
 
+/** After remove re-renders the list, keep focus on the next or previous Remove. */
+function focusPowerInputRemove(index: number): void {
+  const buttons = dom.inputList.querySelectorAll<HTMLButtonElement>(
+    "[data-input-remove]",
+  );
+  const target = buttons[index] ?? buttons[buttons.length - 1];
+  if (target) {
+    target.focus();
+    return;
+  }
+  // The Power empty state is not a picker; Add files is the next action.
+  document.getElementById("add-files")?.focus();
+}
+
 export function renderInputs() {
   const mode = getMode();
   // JSON preserves item boundaries; joining with a newline aliases distinct
@@ -393,6 +407,7 @@ export function renderInputs() {
         setBrowsePasswordFieldVisible(false);
       }
       renderInputs();
+      focusPowerInputRemove(index);
     });
     item.appendChild(content);
     item.appendChild(remove);

@@ -180,11 +180,67 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 static TERMINATE_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 
+/// True between `NSTerminateLater` and `replyToApplicationShouldTerminate:`.
+#[cfg(target_os = "macos")]
+static TERMINATE_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True while AppKit is waiting for an answer to `applicationShouldTerminate:`.
+#[cfg(target_os = "macos")]
+pub(crate) fn system_terminate_pending() -> bool {
+    TERMINATE_PENDING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn system_terminate_pending() -> bool {
+    false
+}
+
+/// Answers a pending `NSTerminateLater`. Must run on the main thread.
+#[cfg(target_os = "macos")]
+pub(crate) fn resolve_system_terminate(should_terminate: bool) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        eprintln!("Could not answer applicationShouldTerminate: not on the main thread.");
+        return;
+    };
+    if !TERMINATE_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(should_terminate);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn resolve_system_terminate(_should_terminate: bool) {}
+
+/// Bounds a logout/shutdown while the normal quit guard asks the user. AppKit
+/// stays in `NSTerminateLater` until an answer arrives; a dismissed prompt has
+/// no backend callback, so answer NO rather than leaving the system waiting.
+#[cfg(target_os = "macos")]
+pub(crate) fn bound_system_terminate_prompt(app: &AppHandle) {
+    if !system_terminate_pending() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        let _ = handle.run_on_main_thread(move || resolve_system_terminate(false));
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn bound_system_terminate_prompt(_app: &AppHandle) {}
+
 /// `applicationShouldTerminate:` for Dock Quit, logout and shutdown. Those send
 /// `terminate:` to NSApp and never reach `ExitRequested`. The same facts that
-/// `ExitRequested` reads decide here. A busy slot cancels the terminate and
-/// hands the decision to `app.exit(0)`, which runs the `ExitRequested` guard.
-/// `app.exit` does not call `terminate:` again, so this cannot loop.
+/// `ExitRequested` reads decide here. A busy slot defers the decision and hands
+/// it to `app.exit(0)`, which runs the `ExitRequested` guard. `app.exit` does
+/// not call `terminate:` again, so this cannot loop.
+///
+/// Returning `NSTerminateCancel` from here makes AppKit treat a pending logout
+/// or shutdown as refused, which aborts the whole system action. `NSTerminateLater`
+/// keeps it waiting while the guard runs; the guard then answers YES or NO.
 #[cfg(target_os = "macos")]
 extern "C-unwind" fn application_should_terminate(
     _this: *mut objc2::runtime::AnyObject,
@@ -199,8 +255,9 @@ extern "C-unwind" fn application_should_terminate(
     if !crate::should_prevent_exit(&crate::read_slot_facts(app), crate::exit_forced()) {
         return NSApplicationTerminateReply::TerminateNow;
     }
+    TERMINATE_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
     app.exit(0);
-    NSApplicationTerminateReply::TerminateCancel
+    NSApplicationTerminateReply::TerminateLater
 }
 
 /// Adds `applicationShouldTerminate:` to the class of tao's NSApplication

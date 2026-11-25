@@ -1,4 +1,5 @@
-import { saveSettings, applyTheme } from "./settings";
+import { applyTheme } from "./settings";
+import { persistSettingsImmediately } from "./ui/workspace";
 import { state } from "./state";
 import {
   refreshDefaultArchiverActionButton,
@@ -105,7 +106,13 @@ export async function markSetupComplete(): Promise<void> {
   state.currentSettings.setupComplete = true;
   state.settingsExtras._setupWizardVersion = SETUP_WIZARD_VERSION;
   try {
-    await saveSettings(state.currentSettings, state.settingsExtras);
+    // Route through immediate persistence, which bumps the generation and
+    // cancels any debounced snapshot, so a pending working-context write cannot
+    // land after the wizard's completion marker.
+    await persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
     state.lastPersistedSettings = { ...state.currentSettings };
   } catch (err) {
     // Keep in-memory completion so Skip/finish still dismisses the wizard this

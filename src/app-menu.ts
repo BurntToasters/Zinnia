@@ -12,7 +12,7 @@ import { isBlockingModalOpen } from "./power-helpers";
 export function handleAppMenuAction(action: string): void {
   switch (action) {
     case "menu-settings":
-      if (!isBlockingModalOpen()) openSettingsModal();
+      if (!isBlockingModalOpen("settings-overlay")) openSettingsModal();
       break;
     case "menu-check-updates":
       void checkUpdates();

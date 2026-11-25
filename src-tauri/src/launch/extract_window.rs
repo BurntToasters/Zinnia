@@ -282,6 +282,12 @@ pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
             if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&exit_handle) {
                 return;
             }
+            // A Finder open, Services request, or Finder Sync drain may have
+            // bumped the generation during teardown. Those entry points run on
+            // the main thread, so this final check catches them before exit.
+            if !warm_idle_timer_still_owns(generation) {
+                return;
+            }
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             exit_handle.exit(0);
         }) {

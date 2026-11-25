@@ -6,9 +6,11 @@ import { createHash } from "node:crypto";
 import {
   captureWindowsProcessIdentity,
   createE2eWebdriverPortHandoff,
+  readWindowsProcessTable,
   reserveE2eWebdriverPort,
   classifyProcessTreeCleanup,
   terminateAndWaitForProcessTree,
+  windowsProcessCaptureFailure,
   windowsProcessCleanupFailure,
   windowsProcessCleanupFailureKind,
 } from "../e2e/helpers/archive-benchmark.js";
@@ -50,6 +52,19 @@ const CANCEL_RACE_SPECS = new Set([
   "./specs/cancel-race.spec.js",
   "./specs/cancel-race-compound.spec.js",
 ]);
+// Specs that only run through a dedicated --only path, not through the
+// recovery plan's scenario loop. Keep every e2e/specs/*.spec.js registered in
+// either the plan or this list; assertEveryE2eSpecRegistered enforces it.
+const E2E_OPT_IN_SPECS = new Map([
+  ["main", "./specs/main.spec.js"],
+  ["extract-window", "./specs/extract-window.spec.js"],
+  ["extract-window-encrypted", "./specs/extract-window-encrypted.spec.js"],
+  ["exfat-extract", "./specs/exfat-extract.spec.js"],
+  ["crash-injection", "./specs/crash-injection.spec.js"],
+  ["crash-recovery", "./specs/crash-recovery.spec.js"],
+]);
+// Harness-owned spec run by scripts/benchmark-archive-io.js, never by test:e2e.
+const E2E_HARNESS_SPECS = new Set(["./specs/archive-io-benchmark.spec.js"]);
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -110,15 +125,36 @@ const ACCEPTED_CLEANUP_STATUSES = ["verified", "build-unproven", "capture-gap"];
 export function listE2eOnlyAvailableNames(root = REPO_ROOT) {
   const plan = loadRecoveryPlan(path.join(root, "e2e", "recovery-plan.json"));
   const names = [
-    "main",
-    "extract-window",
-    "extract-window-encrypted",
-    "crash-injection",
-    "crash-recovery",
+    ...E2E_OPT_IN_SPECS.keys(),
     ...plan.crashCases.map((testCase) => testCase.id),
     ...plan.scenarioSpecs.map((spec) => path.basename(spec, ".spec.js")),
   ];
   return [...new Set(names)].sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * Fail fast when a spec file is not reachable from the full run's plan or from
+ * a dedicated --only entry. A new spec must never silently skip E2E coverage.
+ */
+export function assertEveryE2eSpecRegistered(root = REPO_ROOT) {
+  const plan = loadRecoveryPlan(path.join(root, "e2e", "recovery-plan.json"));
+  const registered = new Set([
+    ...plan.scenarioSpecs,
+    ...E2E_OPT_IN_SPECS.values(),
+    ...E2E_HARNESS_SPECS,
+  ]);
+  const specDir = path.join(root, "e2e", "specs");
+  const orphans = fs
+    .readdirSync(specDir)
+    .filter((name) => name.endsWith(".spec.js"))
+    .map((name) => `./specs/${name}`)
+    .filter((spec) => !registered.has(spec))
+    .sort();
+  if (orphans.length > 0) {
+    throw new Error(
+      `Unregistered E2E spec(s): ${orphans.join(", ")}. Add each to e2e/recovery-plan.json scenarioSpecs (and update suiteCount) or to the opt-in --only list in scripts/test-e2e.js.`,
+    );
+  }
 }
 
 /**
@@ -137,10 +173,12 @@ export function e2eBackgroundValue({ env, platform }) {
 
 export function parseE2eOnlyTokens(argv = process.argv, env = process.env) {
   const tokens = [];
+  let onlyRequested = false;
   const args = argv.slice(2);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg.startsWith("--only=")) {
+      onlyRequested = true;
       for (const piece of arg.slice("--only=".length).split(",")) {
         const trimmed = piece.trim();
         if (trimmed) tokens.push(trimmed);
@@ -148,6 +186,7 @@ export function parseE2eOnlyTokens(argv = process.argv, env = process.env) {
       continue;
     }
     if (arg === "--only") {
+      onlyRequested = true;
       const next = args[index + 1];
       if (next === undefined || next.startsWith("-")) {
         throw new Error("--only requires a spec name.");
@@ -161,10 +200,16 @@ export function parseE2eOnlyTokens(argv = process.argv, env = process.env) {
   }
   const fromEnv = env.ZINNIA_E2E_ONLY?.trim();
   if (fromEnv) {
+    onlyRequested = true;
     for (const piece of fromEnv.split(",")) {
       const trimmed = piece.trim();
       if (trimmed) tokens.push(trimmed);
     }
+  }
+  if (onlyRequested && tokens.length === 0) {
+    throw new Error(
+      `E2E --only was supplied but named no suites. Pass a comma-separated name from: ${listE2eOnlyAvailableNames().join(", ")}`,
+    );
   }
   return tokens.length > 0 ? tokens : null;
 }
@@ -183,6 +228,7 @@ export function resolveE2eOnlySelection(tokens, root = REPO_ROOT) {
     runMain: false,
     runExtractWindow: false,
     runExtractWindowEncrypted: false,
+    runExfatExtract: false,
     crashCaseIds: new Set(),
     runAllCrashLaunches: false,
     runAllCrashRecoveries: false,
@@ -200,6 +246,10 @@ export function resolveE2eOnlySelection(tokens, root = REPO_ROOT) {
     }
     if (bare === "extract-window-encrypted") {
       selection.runExtractWindowEncrypted = true;
+      continue;
+    }
+    if (bare === "exfat-extract") {
+      selection.runExfatExtract = true;
       continue;
     }
     const crashCase = plan.crashCases.find(
@@ -403,6 +453,8 @@ export async function runBoundedCommand(command, args, options = {}) {
   const commandCwd = options.cwd ?? REPO_ROOT;
   const commandEnv = e2eChildEnv(options.env);
   const commandStdio = logFd === null ? "inherit" : ["ignore", "pipe", "pipe"];
+  const processPlatform = options.processPlatform ?? process.platform;
+  const windowsProcessOptions = options.windowsProcessOptions ?? {};
   let fencedLaunch = null;
   let child;
   try {
@@ -413,6 +465,9 @@ export async function runBoundedCommand(command, args, options = {}) {
         stdio: commandStdio,
         shell: usesWindowsCmdShell(command),
         startupTimeoutMs: Math.min(timeoutMs, 20_000),
+        readWindowsProcessTable:
+          windowsProcessOptions.readWindowsProcessTable ??
+          readWindowsProcessTable,
       });
       child = fencedLaunch.child;
     } else {
@@ -429,8 +484,6 @@ export async function runBoundedCommand(command, args, options = {}) {
     if (logFd !== null) fs.closeSync(logFd);
     throw error;
   }
-  const processPlatform = options.processPlatform ?? process.platform;
-  const windowsProcessOptions = options.windowsProcessOptions ?? {};
   const identityCapture = captureWindowsProcessIdentity(child, {
     ...windowsProcessOptions,
     platform: processPlatform,
@@ -488,7 +541,7 @@ export async function runBoundedCommand(command, args, options = {}) {
       const identity = await Promise.race([identityCapture, deadline]);
       if (!identity || identity.pid !== child.pid) {
         throw new Error(
-          `${command} Windows launch fence could not capture its exact leader identity.`,
+          `${command} Windows launch fence could not capture its exact leader identity: ${windowsProcessCaptureFailure(child) ?? "capture returned no identity"}`,
         );
       }
       await fencedLaunch.release(identity);
@@ -1223,6 +1276,7 @@ async function main() {
       "SKIP_E2E=1 is not allowed. Unset it and run the unpackaged WebdriverIO suite.",
     );
   }
+  assertEveryE2eSpecRegistered();
   const onlyTokens = parseE2eOnlyTokens();
   const only = onlyTokens ? resolveE2eOnlySelection(onlyTokens) : null;
   // Set before any app launch so every spawned launch inherits the mode.
@@ -1400,6 +1454,32 @@ async function main() {
         "extract-window-encrypted.log",
       );
       encryptedSuite.status = "passed";
+    }
+    if (only?.runExfatExtract) {
+      const exfatEvidenceDir = path.join(reportDir, "exfat-extract-evidence");
+      fs.rmSync(exfatEvidenceDir, { recursive: true, force: true });
+      fs.mkdirSync(exfatEvidenceDir, { recursive: true });
+      const exfatWebdriver = await reserveE2eWebdriverPort();
+      const exfatSuite = {
+        spec: "./specs/exfat-extract.spec.js",
+        status: "failed",
+        logFile: path.join(reportDir, "exfat-extract.log"),
+      };
+      suites.push(exfatSuite);
+      await runWdio(
+        profile,
+        exfatSuite.spec,
+        [],
+        reportDir,
+        {
+          ZINNIA_E2E_EVIDENCE_DIR: exfatEvidenceDir,
+          TAURI_WEBDRIVER_PORT: String(exfatWebdriver.port),
+        },
+        exfatWebdriver,
+        processCleanup,
+        "exfat-extract.log",
+      );
+      exfatSuite.status = "passed";
     }
     if (recoveryScenariosScheduled(only)) {
       await runRecoveryScenarios({ reportDir, suites, processCleanup, only });

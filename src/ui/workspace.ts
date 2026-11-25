@@ -145,17 +145,19 @@ export function getWorkspaceMode(): WorkspaceMode {
 }
 
 const FULLSCREEN_EXIT_WAIT_MS = 1000;
+const FULLSCREEN_EXIT_DEFER_MS = 5000;
 const FULLSCREEN_EXIT_POLL_MS = 50;
 
 /**
- * Waits, bounded by FULLSCREEN_EXIT_WAIT_MS, for native fullscreen to end.
- * macOS animates out of fullscreen, and resize or unmaximize requests sent
- * during that animation are dropped.
+ * Waits, bounded by the timeout, for native fullscreen to end. macOS animates
+ * out of fullscreen, and resize or unmaximize requests sent during that
+ * animation are dropped.
  */
 async function waitForFullscreenExit(
   appWindow: ReturnType<typeof getCurrentWebviewWindow>,
+  timeoutMs = FULLSCREEN_EXIT_WAIT_MS,
 ): Promise<boolean> {
-  const deadline = Date.now() + FULLSCREEN_EXIT_WAIT_MS;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!(await appWindow.isFullscreen())) return true;
     await new Promise((resolve) =>
@@ -197,9 +199,21 @@ export async function resizeWorkspaceWindow(
               (await appWindow.isFullscreen())
             ) {
               await appWindow.setFullscreen(false);
-              const exited = await waitForFullscreenExit(appWindow);
+              let exited = await waitForFullscreenExit(appWindow);
               if (!exited) {
-                devLog("Window still fullscreen after the exit wait");
+                // The native animation can outlast the short wait. Locking a
+                // still-fullscreen window leaves Basic at the wrong size and
+                // non-maximizable, so keep waiting before applying the lock.
+                exited = await waitForFullscreenExit(
+                  appWindow,
+                  FULLSCREEN_EXIT_DEFER_MS,
+                );
+              }
+              if (!exited) {
+                console.warn(
+                  "Basic window lock skipped: the window is still fullscreen.",
+                );
+                return;
               }
             }
           } catch (err) {

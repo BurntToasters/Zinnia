@@ -17,8 +17,8 @@
 .browse-table-wrap {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: auto;
-  max-height: calc(100vh - 340px);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .browse-table {

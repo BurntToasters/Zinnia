@@ -107,7 +107,8 @@
     "./specs/beta2-fe-cleanup.spec.js",
     "./specs/beta2-styles-basic.spec.js",
     "./specs/beta2-styles-core.spec.js",
-    "./specs/beta2-copy-sweep.spec.js"
+    "./specs/beta2-copy-sweep.spec.js",
+    "./specs/posix-backslash-names.spec.js"
   ],
-  "suiteCount": 61
+  "suiteCount": 62
 }

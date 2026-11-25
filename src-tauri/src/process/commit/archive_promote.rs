@@ -172,11 +172,15 @@ where
             record_published(&target, &expected_identity)?;
             let mut created_identity = None;
             let selected_strategy =
-                publish_file_no_replace_with_created(&source, &target, |created, identity| {
+                publish_file_no_replace_with_created(&source, &target, |_, identity, _| {
                     // The compatibility copy path allocates a new object. Journal
-                    // that identity while its create-new handle is still open and
-                    // before any bytes are copied, closing the last crash window.
-                    record_published(created, identity)?;
+                    // the final family name with that identity while its create-new
+                    // handle is still open and before any bytes are copied, then
+                    // again with the identity after the copy (first write may change
+                    // a FAT/exFAT placeholder inode) and before the rename. The
+                    // journal accepts only planned family names, so the hidden temp
+                    // sibling is not journaled and is not visible at the final name.
+                    record_published(&target, identity)?;
                     created_identity = Some(identity.clone());
                     Ok(())
                 })?;

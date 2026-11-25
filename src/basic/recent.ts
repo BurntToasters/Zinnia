@@ -1,5 +1,6 @@
 import { validateArchivePaths } from "../archive-rules";
 import { basename } from "../path-display";
+import { looksLikeWindowsPath } from "../extract-path";
 import { isKeyHandled, markKeyHandled } from "../utils";
 
 const RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
@@ -193,7 +194,11 @@ function wireRecentMenuOnce(): void {
 }
 
 function parentFolderText(path: string): string {
-  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
+  const separator = Math.max(
+    path.lastIndexOf("/"),
+    looksLikeWindowsPath(path) ? path.lastIndexOf("\\") : -1,
+  );
   if (separator < 0) return "";
   if (separator === 0) return path.slice(0, 1);
   const parent = path.slice(0, separator);

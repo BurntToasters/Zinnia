@@ -13,9 +13,14 @@ use std::path::{Component, Path, PathBuf};
 /// Privileged replacement keeps the outer `.app` directory in place so Dock
 /// bookmarks do not follow the running app into the rollback directory.
 /// Both new and legacy backups store the original `Contents` under `$BAK`.
+/// The staged tree is moved to `$SRC/Contents.new` and exchanged with the live
+/// `Contents` by JXA `renamex_np(RENAME_SWAP)`, mirroring the unprivileged
+/// path. The old tree then moves into `$BAK/Contents`. Only when the exchange
+/// fails does the script fall back to the two-rename transaction.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || exit 1; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
+  -- Fallback below is two renames with no live Contents between them. A crash there leaves the app bundle without Contents, the same failure mode as before. It runs only when renamex_np is unavailable.
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; /bin/rm -rf \"$SRC/Contents.new\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents.new\" || { /bin/rm -rf \"$SRC/Contents.new\"; exit 1; }; if /usr/bin/osascript -l JavaScript -e 'ObjC.bindFunction(\"renamex_np\", [\"int\", [\"char *\", \"char *\", \"unsigned int\"]]); function run(argv) { if ($.renamex_np(argv[0], argv[1], 2) !== 0) { throw new Error(\"renamex_np failed\"); } }' \"$SRC/Contents\" \"$SRC/Contents.new\"; then /bin/mv -f \"$SRC/Contents.new\" \"$BAK/Contents\"; /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || { /bin/rm -rf \"$SRC/Contents.new\"; exit 1; }; if /bin/mv -f \"$SRC/Contents.new\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; /bin/rm -rf \"$SRC/Contents.new\"; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -106,12 +111,41 @@ fn restore_macos_contents(source: &Path, live: &Path) -> std::io::Result<()> {
 
 /// Replace only `Contents`; the installed `.app` inode is the Dock identity.
 /// The caller recovers/removes any previous sibling backup before entering.
-/// An atomic exchange is tried first; the backup transaction is the fallback.
+///
+/// The staged tree is first moved beside the live bundle as `Contents.new`.
+/// Then `renamex_np` with `RENAME_SWAP` exchanges the two directories in one
+/// step, so a crash can never leave the live bundle without `Contents`. The
+/// previous `Contents` ends up at `Contents.new` and is moved into the sibling
+/// backup afterwards, keeping the existing recovery path usable. When the
+/// exchange is unavailable, the two-rename backup transaction runs instead.
 pub fn install_macos_app_contents(stage: &Path, app: &Path, backup: &Path) -> std::io::Result<()> {
     if let Some(result) = swap_app_contents_when_possible(stage, app, backup, exchange_contents) {
         return result;
     }
     install_macos_app_contents_with(stage, app, backup, move_dir_replacing)
+}
+
+/// Sibling staging name used by the exchange transaction.
+fn contents_new_path(app: &Path) -> PathBuf {
+    app.join("Contents.new")
+}
+
+/// Removes a leftover `Contents.new` from an interrupted exchange. The live
+/// bundle must already be complete, so this copy is never the only recoverable
+/// one. Never follows a symlink at the staging name.
+fn remove_leftover_contents_new(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Moves the staged tree back when the exchange cannot proceed, so the caller's
+/// fallback transaction or the privileged script still finds `stage/Contents`.
+fn restore_staged_contents(stage: &Path, contents_new: &Path) -> std::io::Result<()> {
+    move_dir_replacing(contents_new, &stage.join("Contents"))
 }
 
 /// Exchanges the staged and live `Contents` in one step, so the live bundle is
@@ -122,14 +156,86 @@ fn swap_app_contents_when_possible(
     backup: &Path,
     exchange: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
 ) -> Option<std::io::Result<()>> {
-    if !macos_app_bundle_complete(stage) || !backup_slot_is_free(backup) {
+    if !macos_app_bundle_complete(stage)
+        || !macos_app_bundle_complete(app)
+        || !backup_slot_is_free(backup)
+    {
         return None;
     }
-    match exchange(&stage.join("Contents"), &app.join("Contents")) {
-        Ok(()) => Some(Ok(())),
+    let live = app.join("Contents");
+    let contents_new = contents_new_path(app);
+
+    if let Err(err) = remove_leftover_contents_new(&contents_new) {
+        return Some(Err(err));
+    }
+    if let Err(err) = move_dir_replacing(&stage.join("Contents"), &contents_new) {
+        let _ = remove_leftover_contents_new(&contents_new);
         // Admin-owned bundles must reach the privileged path, not the fallback.
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => Some(Err(err)),
-        Err(_) => None,
+        return if err.kind() == std::io::ErrorKind::PermissionDenied {
+            Some(Err(err))
+        } else {
+            None
+        };
+    }
+
+    // Refuse an existing backup before touching the live tree. `create_dir`
+    // never overwrites the only recoverable copy.
+    if let Err(err) = std::fs::create_dir(backup) {
+        return match restore_staged_contents(stage, &contents_new) {
+            Ok(()) => Some(Err(err)),
+            Err(restore_error) => Some(Err(std::io::Error::other(format!(
+                "{err}; could not restore staged Contents: {restore_error}"
+            )))),
+        };
+    }
+
+    match exchange(&live, &contents_new) {
+        Ok(()) => {
+            archive_swapped_contents(&contents_new, backup);
+            Some(Ok(()))
+        }
+        // Admin-owned bundles must reach the privileged path, not the fallback.
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            let _ = std::fs::remove_dir(backup);
+            match restore_staged_contents(stage, &contents_new) {
+                Ok(()) => Some(Err(err)),
+                Err(restore_error) => Some(Err(std::io::Error::other(format!(
+                    "{err}; could not restore staged Contents: {restore_error}"
+                )))),
+            }
+        }
+        // RENAME_SWAP reports ENOTSUP/EINVAL on filesystems without atomic
+        // directory exchange. Fall back to the two-rename backup transaction.
+        Err(_) => {
+            let _ = std::fs::remove_dir(backup);
+            match restore_staged_contents(stage, &contents_new) {
+                Ok(()) => None,
+                Err(restore_error) => Some(Err(std::io::Error::other(format!(
+                    "atomic Contents exchange is unavailable and the staged tree could not be restored: {restore_error}"
+                )))),
+            }
+        }
+    }
+}
+
+/// After a successful exchange, the old live `Contents` sits at
+/// `app/Contents.new`. Move it into the adjacent backup, then drop the backup
+/// because the new bundle is already live.
+fn archive_swapped_contents(contents_new: &Path, backup: &Path) {
+    // The exchange committed the update. A failure here must not report the
+    // install as failed; keep the previous tree beside the live bundle.
+    let archived = std::fs::rename(contents_new, backup.join("Contents"));
+    if archived.is_ok() {
+        let _ = std::fs::remove_dir_all(backup);
+    } else {
+        let _ = std::fs::remove_dir(backup);
+    }
+    if let Err(err) = archived {
+        eprintln!(
+            "The new app is installed, but the previous Contents could not be moved into {}: {err}; it remains at {}",
+            backup.display(),
+            contents_new.display()
+        );
     }
 }
 
@@ -235,6 +341,9 @@ pub fn restore_error_needs_admin(error: Option<&std::io::Error>) -> bool {
     error.is_some_and(|err| err.kind() == std::io::ErrorKind::PermissionDenied)
 }
 
+/// Fallback two-rename transaction for filesystems where `RENAME_SWAP` is
+/// unavailable. It keeps the previous `Contents` in the backup until the new
+/// tree is verified, then restores it after an injected or real move failure.
 fn install_macos_app_contents_with(
     stage: &Path,
     app: &Path,
@@ -673,20 +782,25 @@ mod tests {
                 .contains("/bin/rm -rf \\\"$SRC/Contents\\\"; fi; /bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""),
             "failed swap must remove the incomplete new tree before restoring the backup"
         );
-        let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\"")
-            .expect("live Contents must be renamed to the sibling backup first");
+        let staged_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$NEW/Contents\\\" \\\"$SRC/Contents.new\\\"")
+            .expect("staged Contents must move beside the live bundle first");
         let stale_backup_rm = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find(concat!(
-                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; /bin/mkdir \\\"$BAK\\\" || exit 1; ",
-                "/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\""
-            ))
-            .expect(
-                "stale backup may be removed only after live Contents exists and immediately before the swap",
-            );
+            .find("if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; /bin/mkdir \\\"$BAK\\\" || exit 1;")
+            .expect("stale backup must be cleared before the exchange");
+        let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("-l JavaScript")
+            .expect("live Contents must be exchanged with renamex_np first");
+        let fallback_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\" ||")
+            .expect("two-rename fallback must remain for unsupported filesystems");
         assert!(
-            stale_backup_rm < swap_at,
-            "must not delete the sibling backup before the live bundle is moved"
+            stale_backup_rm < swap_at && staged_at < swap_at,
+            "must not delete the sibling backup or exchange before the staged tree is in place"
+        );
+        assert!(
+            swap_at < fallback_at,
+            "the atomic exchange must be attempted before the two-rename fallback"
         );
         assert!(
             !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("rm -rf \" & quoted form of srcPath"),
@@ -1100,13 +1214,23 @@ mod tests {
 
     #[test]
     fn script_touches_bundle_before_success_exit() {
-        let moved = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$NEW/Contents\\\" \\\"$SRC/Contents\\\"")
-            .expect("new Contents must be moved into the app");
+        let swapped = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("-l JavaScript")
+            .expect("new Contents must be exchanged into the app");
         let touch = MACOS_PRIVILEGED_INSTALL_SCRIPT
             .find("/usr/bin/touch \\\"$SRC\\\"; exit 0")
             .expect("bundle must be touched right before the success exit");
-        assert!(moved < touch, "touch must run after the successful move");
+        assert!(swapped < touch, "touch must run after the successful swap");
+        let fallback_moved = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$SRC/Contents.new\\\" \\\"$SRC/Contents\\\"")
+            .expect("fallback must move new Contents into the app");
+        let fallback_touch = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .rfind("/usr/bin/touch \\\"$SRC\\\"; exit 0")
+            .expect("fallback must touch the bundle before its success exit");
+        assert!(
+            fallback_moved < fallback_touch,
+            "fallback touch must run after its successful move"
+        );
     }
 
     #[test]
@@ -1192,7 +1316,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_swap_keeps_outer_app_and_leaves_old_contents_in_stage() {
+    fn macos_swap_keeps_outer_app_and_archives_old_contents() {
         use std::os::unix::fs::MetadataExt;
         let (root, app, stage, backup) = macos_fixture();
         let inode = std::fs::metadata(&app).unwrap().ino();
@@ -1202,11 +1326,10 @@ mod tests {
             std::fs::read_to_string(app.join("Contents/version")).unwrap(),
             "new"
         );
-        // An exchange leaves the old tree in the stage dir; a rename would not.
-        assert_eq!(
-            std::fs::read_to_string(stage.join("Contents/version")).unwrap(),
-            "old"
-        );
+        // The staged tree moves to Contents.new before the exchange, and the
+        // old tree is archived only long enough to complete the transaction.
+        assert!(!stage.join("Contents").exists());
+        assert!(!app.join("Contents.new").exists());
         assert!(!backup.exists());
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -29,9 +29,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
-  min-height: 220px;
-  max-height: 380px;
-  overflow: auto;
+  flex: 0 0 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

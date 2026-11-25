@@ -40,25 +40,27 @@ fn query_target(target: ArchiveDefaultTarget, can_change: bool) -> ArchiveDefaul
     archive_status(target, current_handler, can_change, status)
 }
 
+const MACOS_DEFAULT_TARGET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Generous cap for the whole batch, not a shared per-target budget: one slow
+/// confirmation must not starve the remaining file types.
+const MACOS_DEFAULT_OVERALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
 fn set_target(
     target: ArchiveDefaultTarget,
     bundle_id_value: &str,
     changed_status: &str,
-    deadline: std::time::Instant,
 ) -> ArchiveDefaultStatus {
-    if std::time::Instant::now() >= deadline {
-        return archive_status(
-            target,
-            None,
-            true,
-            "Default-app operation reached its overall timeout",
-        );
-    }
+    let deadline = std::time::Instant::now() + MACOS_DEFAULT_TARGET_TIMEOUT;
     let Some(uti) = uti_for_extension(target.extension) else {
         return archive_status(target, None, true, "Unknown file type");
     };
     let workspace = NSWorkspace::sharedWorkspace();
     let bundle_id = NSString::from_str(bundle_id_value);
+    let current_handler = current_handler_for_uti(&workspace, &uti);
+    // Already ours: do not spend a confirmation prompt on this type.
+    if current_handler.as_deref() == Some(bundle_id_value) {
+        return archive_status(target, current_handler, true, changed_status);
+    }
     let Some(application_url) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id) else {
         return archive_status(target, None, true, "Installed app bundle not found");
     };
@@ -81,7 +83,9 @@ fn set_target(
     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
     let completion_error = match receiver.recv_timeout(remaining) {
         Ok(error) => error,
-        Err(_) => Some("macOS did not finish the default-app request".to_string()),
+        Err(_) => {
+            Some("macOS did not finish the default-app request for this file type".to_string())
+        }
     };
     let current_handler = current_handler_for_uti(&workspace, &uti);
     if completion_error.is_none() && current_handler.as_deref() == Some(bundle_id_value) {
@@ -104,12 +108,20 @@ pub(crate) fn query_archive_defaults(can_change: bool) -> Vec<ArchiveDefaultStat
 }
 
 pub(crate) fn set_archive_defaults() -> Vec<ArchiveDefaultStatus> {
-    // Bound the whole operation, rather than allowing every content type
-    // to consume a separate timeout interval.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let overall_deadline = std::time::Instant::now() + MACOS_DEFAULT_OVERALL_TIMEOUT;
     ARCHIVE_DEFAULT_TARGETS
         .iter()
-        .map(|target| set_target(*target, ZINNIA_BUNDLE_ID, "Default", deadline))
+        .map(|target| {
+            if std::time::Instant::now() >= overall_deadline {
+                return archive_status(
+                    *target,
+                    None,
+                    true,
+                    "Default-app operation reached its overall timeout",
+                );
+            }
+            set_target(*target, ZINNIA_BUNDLE_ID, "Default")
+        })
         .collect()
 }
 

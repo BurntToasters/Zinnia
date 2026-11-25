@@ -11,13 +11,18 @@ if (process.platform !== "darwin") {
 }
 
 const root = process.cwd();
+const unsigned = process.argv.includes("--unsigned");
 const targetArg = process.argv.indexOf("--target");
 const target =
   targetArg >= 0 ? process.argv[targetArg + 1] : "universal-apple-darwin";
 if (!target || target.startsWith("--")) {
-  console.error("Usage: node scripts/zip-macos.js [--target <rust-target>]");
+  console.error(
+    "Usage: node scripts/zip-macos.js [--unsigned] [--target <rust-target>]",
+  );
   process.exit(1);
 }
+const universalTarget = target === "universal-apple-darwin";
+const REQUIRED_UNIVERSAL_ARCHES = ["x86_64", "arm64"];
 
 const appPath = path.join(
   root,
@@ -215,9 +220,21 @@ if (marketingVersion !== expectedMarketingVersion) {
 
 const hostBinaryPath = path.join(appPath, "Contents", "MacOS", "zinnia");
 const hostArchitectures = readMachOArchitectures(hostBinaryPath);
-verifyMachOCompatibility(hostBinaryPath, hostArchitectures);
+const requiredArchitectures = universalTarget
+  ? REQUIRED_UNIVERSAL_ARCHES
+  : hostArchitectures;
+if (universalTarget) {
+  for (const arch of REQUIRED_UNIVERSAL_ARCHES) {
+    if (!hostArchitectures.includes(arch)) {
+      throw new Error(
+        `Universal host binary is thin: missing ${arch} (found ${hostArchitectures.join(", ")}). Universal bundles must contain x86_64 and arm64.`,
+      );
+    }
+  }
+}
+verifyMachOCompatibility(hostBinaryPath, requiredArchitectures);
 const sidecarPath = path.join(appPath, "Contents", "MacOS", "7z");
-verifyMachOCompatibility(sidecarPath, hostArchitectures);
+verifyMachOCompatibility(sidecarPath, requiredArchitectures);
 
 const finderSyncAppex = path.join(
   appPath,
@@ -232,27 +249,7 @@ if (!fs.existsSync(finderSyncAppex)) {
 }
 verifyMachOCompatibility(
   path.join(finderSyncAppex, "Contents", "MacOS", "ZinniaFinderSync"),
-  hostArchitectures,
-);
-execFileSync(
-  "codesign",
-  ["--verify", "--deep", "--strict", "--verbose=2", finderSyncAppex],
-  { stdio: "inherit" },
-);
-verifySignedEntitlements(finderSyncAppex, {
-  ...readEntitlementsTemplate(
-    path.join(
-      root,
-      "src-tauri",
-      "macos",
-      "build",
-      "ZinniaFinderSync.entitlements",
-    ),
-  ),
-});
-const extensionTeam = verifyDeveloperIdSignature(
-  finderSyncAppex,
-  "Finder Sync extension",
+  requiredArchitectures,
 );
 
 const extensionInfoPlist = path.join(finderSyncAppex, "Contents", "Info.plist");
@@ -265,68 +262,112 @@ if (
   throw new Error("Finder Sync extension versions do not match the host app.");
 }
 
-execFileSync(
-  "codesign",
-  ["--verify", "--deep", "--strict", "--verbose=2", appPath],
-  { stdio: "inherit" },
-);
-const hostTeam = verifyDeveloperIdSignature(appPath, "macOS app");
-if (hostTeam !== extensionTeam) {
-  throw new Error(
-    `Host TeamIdentifier ${hostTeam} does not match Finder Sync ${extensionTeam}.`,
+if (unsigned) {
+  // Local/CI unsigned builds cannot prove a Team ID or Developer ID signature.
+  // build-macos-finder-sync.sh uses this group when APPLE_TEAM_ID is unset.
+  const expectedAppGroup = "group.run.rosie.zinnia.findersync";
+  if (
+    readPlistValue(extensionInfoPlist, "ZinniaAppGroupIdentifier") !==
+    expectedAppGroup
+  ) {
+    throw new Error(
+      "Unsigned Finder Sync Info.plist App Group does not match the unsigned build default.",
+    );
+  }
+  // build.rs bakes ZINNIA_APP_GROUP_ID into the host; this catches a host that
+  // was built with a different Team ID than its unsigned extension.
+  assertUniversalBinaryContainsAppGroup(
+    hostBinaryPath,
+    expectedAppGroup,
+    "macOS host Mach-O",
   );
-}
-const hostEntitlements = readEntitlementsTemplate(
-  path.join(root, "src-tauri", "macos", "build", "Zinnia.entitlements"),
-);
-const extensionEntitlements = readEntitlementsTemplate(
-  path.join(
-    root,
-    "src-tauri",
-    "macos",
-    "build",
-    "ZinniaFinderSync.entitlements",
-  ),
-);
-const expectedAppGroup = `${hostTeam}.run.rosie.zinnia.findersync`;
-verifyAppGroup(hostEntitlements, expectedAppGroup, "macOS app");
-verifyAppGroup(
-  extensionEntitlements,
-  expectedAppGroup,
-  "Finder Sync extension",
-);
-if (
-  readPlistValue(extensionInfoPlist, "ZinniaAppGroupIdentifier") !==
-  expectedAppGroup
-) {
-  throw new Error(
-    "Finder Sync Info.plist App Group does not match its Team ID.",
+} else {
+  execFileSync(
+    "codesign",
+    ["--verify", "--deep", "--strict", "--verbose=2", finderSyncAppex],
+    { stdio: "inherit" },
   );
-}
-// build.rs bakes ZINNIA_APP_GROUP_ID into the host; entitlements alone cannot
-// catch a host built without APPLE_TEAM_ID against a Team-ID appex.
-assertUniversalBinaryContainsAppGroup(
-  path.join(appPath, "Contents", "MacOS", "zinnia"),
-  expectedAppGroup,
-  "macOS host Mach-O",
-);
-verifySignedEntitlements(appPath, hostEntitlements);
-// Tauri signs externalBin sidecars with the same entitlements.plist as the app.
-verifySignedEntitlements(sidecarPath, hostEntitlements);
-const sidecarTeam = verifyDeveloperIdSignature(sidecarPath, "7-Zip sidecar");
-if (sidecarTeam !== hostTeam) {
-  throw new Error(
-    `7-Zip TeamIdentifier ${sidecarTeam} does not match host ${hostTeam}.`,
+  verifySignedEntitlements(finderSyncAppex, {
+    ...readEntitlementsTemplate(
+      path.join(
+        root,
+        "src-tauri",
+        "macos",
+        "build",
+        "ZinniaFinderSync.entitlements",
+      ),
+    ),
+  });
+  const extensionTeam = verifyDeveloperIdSignature(
+    finderSyncAppex,
+    "Finder Sync extension",
   );
-}
-execFileSync("xcrun", ["stapler", "validate", appPath], { stdio: "inherit" });
-execFileSync(
-  "spctl",
-  ["--assess", "--type", "execute", "--verbose=2", appPath],
-  {
+
+  execFileSync(
+    "codesign",
+    ["--verify", "--deep", "--strict", "--verbose=2", appPath],
+    { stdio: "inherit" },
+  );
+  const hostTeam = verifyDeveloperIdSignature(appPath, "macOS app");
+  if (hostTeam !== extensionTeam) {
+    throw new Error(
+      `Host TeamIdentifier ${hostTeam} does not match Finder Sync ${extensionTeam}.`,
+    );
+  }
+  const hostEntitlements = readEntitlementsTemplate(
+    path.join(root, "src-tauri", "macos", "build", "Zinnia.entitlements"),
+  );
+  const extensionEntitlements = readEntitlementsTemplate(
+    path.join(
+      root,
+      "src-tauri",
+      "macos",
+      "build",
+      "ZinniaFinderSync.entitlements",
+    ),
+  );
+  const expectedAppGroup = `${hostTeam}.run.rosie.zinnia.findersync`;
+  verifyAppGroup(hostEntitlements, expectedAppGroup, "macOS app");
+  verifyAppGroup(
+    extensionEntitlements,
+    expectedAppGroup,
+    "Finder Sync extension",
+  );
+  if (
+    readPlistValue(extensionInfoPlist, "ZinniaAppGroupIdentifier") !==
+    expectedAppGroup
+  ) {
+    throw new Error(
+      "Finder Sync Info.plist App Group does not match its Team ID.",
+    );
+  }
+  // build.rs bakes ZINNIA_APP_GROUP_ID into the host; entitlements alone
+  // cannot catch a host built without APPLE_TEAM_ID against a Team-ID appex.
+  assertUniversalBinaryContainsAppGroup(
+    path.join(appPath, "Contents", "MacOS", "zinnia"),
+    expectedAppGroup,
+    "macOS host Mach-O",
+  );
+  verifySignedEntitlements(appPath, hostEntitlements);
+  // Tauri signs externalBin sidecars with the same entitlements.plist as the app.
+  verifySignedEntitlements(sidecarPath, hostEntitlements);
+  const sidecarTeam = verifyDeveloperIdSignature(sidecarPath, "7-Zip sidecar");
+  if (sidecarTeam !== hostTeam) {
+    throw new Error(
+      `7-Zip TeamIdentifier ${sidecarTeam} does not match host ${hostTeam}.`,
+    );
+  }
+  execFileSync("xcrun", ["stapler", "validate", appPath], {
     stdio: "inherit",
-  },
-);
+  });
+  execFileSync(
+    "spctl",
+    ["--assess", "--type", "execute", "--verbose=2", appPath],
+    {
+      stdio: "inherit",
+    },
+  );
+}
 
 const baseName = path.basename(appPath, ".app");
 const zipPath = path.join(path.dirname(appPath), `${baseName}.zip`);

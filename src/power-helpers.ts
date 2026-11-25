@@ -2,12 +2,20 @@ import { $ } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 
 /**
- * True while the input/rename modal or the setup wizard owns the screen. The
- * global shortcuts and native menu actions for Settings, Shortcuts and
- * Licenses stay closed until it is dismissed.
+ * True while any sheet or the setup wizard owns the screen. Every modal overlay
+ * (settings, convert, selective, preview, licenses, shortcuts, input) and the
+ * wizard blocks the global shortcuts and native menu sheets, so Tab inside an
+ * invisible lower sheet cannot run behind the visible one. Pass an overlay id
+ * to ignore that one sheet, e.g. so Settings can toggle itself closed.
  */
-export function isBlockingModalOpen(): boolean {
-  return !$("setup-wizard-overlay").hidden || !$("input-modal-overlay").hidden;
+export function isBlockingModalOpen(ignoreOverlayId?: string): boolean {
+  const open = document.querySelectorAll(
+    ".modal-overlay:not([hidden]), .setup-wizard-overlay:not([hidden])",
+  );
+  for (const el of open) {
+    if (el.id !== ignoreOverlayId) return true;
+  }
+  return false;
 }
 
 export function isEditableTarget(target: EventTarget | null): boolean {

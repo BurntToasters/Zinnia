@@ -629,7 +629,20 @@ fn compound_tar_outer_extract_args_harden_and_link_policy() {
     let args = compound_tar_outer_extract_args(
         std::path::Path::new("/tmp/source.tar.gz"),
         std::path::Path::new("/tmp/outer-stage"),
+        &[],
     );
+    let with_password = compound_tar_outer_extract_args(
+        std::path::Path::new("/tmp/source.tar.gz"),
+        std::path::Path::new("/tmp/outer-stage"),
+        &["-psecret".to_string()],
+    );
+    let separator = with_password
+        .iter()
+        .position(|arg| arg == "--")
+        .expect("separator");
+    assert!(with_password[..separator]
+        .iter()
+        .any(|arg| arg == "-psecret"));
     assert_eq!(args.first().map(String::as_str), Some("x"));
     assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snld10")));
     assert!(args.iter().any(|arg| arg == "--"));
@@ -642,7 +655,7 @@ fn compound_tar_outer_extract_args_harden_and_link_policy() {
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-sns-")));
     }
     let source = include_str!("commands/run.rs");
-    assert!(source.contains("compound_tar_outer_extract_args(&snapshot, &outer_stage)"));
+    assert!(source.contains("&caller_password_switches(caller_args)"));
     assert!(
         source.contains("compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr)")
     );
@@ -1981,7 +1994,7 @@ fn real_7z_extracts_zips_hello_tar_gz_through_compound_two_pass() {
     let snapshot_parent = staged_snapshot.parent().expect("snapshot parent");
     let outer_stage = snapshot_parent.join("outer");
     std::fs::create_dir_all(&outer_stage).expect("outer stage");
-    let outer_args = compound_tar_outer_extract_args(staged_snapshot, &outer_stage);
+    let outer_args = compound_tar_outer_extract_args(staged_snapshot, &outer_stage, &[]);
     let outer = std::process::Command::new(&binary)
         .args(&outer_args)
         .output()
@@ -2356,6 +2369,7 @@ fn extract_stage_placement_serializes_and_missing_fields_decode_as_defaults() {
     let destination = std::path::PathBuf::from("root/destination");
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -2399,6 +2413,7 @@ fn extract_stage_placement_serializes_and_missing_fields_decode_as_defaults() {
         .expect("destination parent")
         .join(".zinnia-extract-fedcba9876543210fedcba9876543210");
     let mut legacy = serde_json::to_value(CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: sibling.clone(),
         destination: destination.clone(),
@@ -2738,6 +2753,7 @@ fn sibling_extract_journal_validation_accepts_published_destination() {
     std::fs::write(stage.join("new.txt"), b"new").expect("staged file");
     let stage_identity = super::journal::path_identity(&stage).expect("stage identity");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -4237,7 +4253,10 @@ fn slt_manifest_rejects_malformed_size_and_overflowing_limits() {
         MAX_EXTRACTED_BYTES - 1,
     )
     .expect_err("declared bytes beyond the operation limit must fail");
-    assert!(error.contains("declares more than"));
+    assert_eq!(
+        error,
+        "Not enough free space: this archive needs about 1024.0 GiB, and the free space on the destination volume could not be read."
+    );
 }
 
 #[test]
@@ -4858,6 +4877,7 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
     std::fs::create_dir_all(&stage).expect("stage");
     std::fs::write(&destination, b"published").expect("dest");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -4886,6 +4906,7 @@ fn explicit_extract_phase_controls_cleanup_only_recovery() {
     let destination = std::path::PathBuf::from("root/destination");
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     let mut journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage,
         destination,
@@ -4921,6 +4942,7 @@ fn missing_new_destination_stage_preserves_ambiguous_destination() {
     std::fs::rename(&stage, &destination).expect("simulate whole-stage publish");
 
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -4957,6 +4979,7 @@ fn preserved_ack_predicate_only_accepts_ambiguous_sibling_publish() {
     let stage = root.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::create_dir(&destination).expect("destination");
     let base = || CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5038,6 +5061,7 @@ fn missing_new_destination_stage_preserves_an_identity_mismatch() {
     std::fs::rename(&replacement, &destination).expect("install replacement destination");
 
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5077,6 +5101,7 @@ fn missing_committed_extract_stage_preserves_the_destination() {
         super::journal::path_identity_with_fingerprint(&stage).expect("stage identity");
     std::fs::rename(&stage, &destination).expect("publish stage");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5113,6 +5138,7 @@ fn extraction_cleanup_preserves_stage_when_sidecar_cleanup_fails() {
     // file. Cleanup must fail before deleting the only remaining stage state.
     std::fs::create_dir(move_plan_path(&stage)).expect("invalid sidecar directory");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
@@ -5173,6 +5199,7 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
     std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
     std::fs::write(&destination, b"partial").expect("partial dest");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5213,6 +5240,7 @@ fn archive_journal_rollback_refuses_family_paths_outside_the_destination() {
     std::fs::write(&nested_victim, b"same name, other folder").expect("nested victim");
 
     let journal_for = |next: std::path::PathBuf| CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5266,6 +5294,7 @@ fn archive_journal_rollback_accepts_destination_and_numbered_volumes() {
     std::fs::write(&volume_one, b"v1").expect("volume 1");
     std::fs::write(&volume_two, b"v2").expect("volume 2");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5319,6 +5348,7 @@ fn scrub_retract_removes_partial_archive_publish() {
     std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
     std::fs::write(&destination, b"partial").expect("partial dest");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5360,6 +5390,7 @@ fn scrub_retract_ignores_non_archive_journals() {
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&stage).expect("stage");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5396,6 +5427,7 @@ fn archive_journal_rollback_preserves_legacy_backup_without_identity() {
     std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
     std::fs::write(&destination, b"new-partial").expect("partial new");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5437,6 +5469,7 @@ fn archive_journal_rollback_restores_identity_verified_backup() {
     let published_identity =
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5483,6 +5516,7 @@ fn archive_journal_rollback_rejects_same_inode_rewritten_backup() {
     let published_identity =
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5528,6 +5562,7 @@ fn archive_journal_rollback_rejects_replaced_backup() {
     let published_identity =
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5567,6 +5602,7 @@ fn committed_archive_cleanup_rejects_replaced_backup() {
     std::fs::write(&backup, b"attacker replacement").expect("replacement backup");
     std::fs::write(&destination, b"new-committed").expect("committed archive");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5613,6 +5649,7 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
         super::journal::regular_file_identity_with_fingerprint(&second_backup).unwrap();
     std::fs::write(&first, b"new-1").expect("published first");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: root.join("out.7z"),
@@ -5654,6 +5691,7 @@ fn archive_journal_rollback_preserves_published_volume_without_identity() {
     let backup_identity = super::journal::regular_file_identity_with_fingerprint(&backup).unwrap();
     std::fs::write(&destination, b"new-unrecorded").expect("published");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5693,6 +5731,7 @@ fn archive_journal_rollback_restores_backup_when_prerecorded_publish_is_missing(
     std::fs::write(&backup, b"old").expect("backup");
     let backup_identity = super::journal::regular_file_identity_with_fingerprint(&backup).unwrap();
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5742,6 +5781,7 @@ fn archive_journal_rollback_preserves_a_replacement_output() {
         "replacement must not inherit the published file identity"
     );
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5782,6 +5822,7 @@ fn archive_journal_rollback_preserves_an_output_modified_in_place() {
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     std::fs::write(&destination, b"user edit").expect("in-place edit");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5814,6 +5855,7 @@ fn archive_journal_rollback_retracts_unfingerprinted_matching_output() {
     std::fs::write(&destination, b"published").expect("published output");
     let identity_only = super::journal::regular_file_identity(&destination).unwrap();
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5853,6 +5895,7 @@ fn archive_journal_rollback_preserves_replaced_unfingerprinted_output() {
     std::fs::write(&replacement, b"user replacement").expect("replacement");
     std::fs::rename(&replacement, &destination).expect("replace destination");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
@@ -5889,6 +5932,7 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
     let second_backup_identity =
         super::journal::regular_file_identity_with_fingerprint(&second_backup).unwrap();
     let mut journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: root.join("out.7z"),
@@ -6048,6 +6092,7 @@ fn archive_stage_identity_mismatch_is_preserved_during_cleanup() {
     std::fs::create_dir(&stage).expect("replacement stage");
     std::fs::write(stage.join("user.txt"), b"replacement").expect("replacement content");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
@@ -6085,6 +6130,7 @@ fn legacy_archive_stage_without_identity_fails_closed() {
     std::fs::create_dir_all(&stage).expect("legacy stage");
     std::fs::write(stage.join("legacy.txt"), b"legacy").expect("legacy content");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
@@ -6158,6 +6204,7 @@ fn extract_stage_identity_mismatch_preserves_stage_and_sidecars() {
     let sidecar = move_plan_path(&stage);
     std::fs::write(&sidecar, b"replacement sidecar").expect("replacement sidecar");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
@@ -6321,6 +6368,7 @@ fn artifact_extract_journal(
     move_identity_log_identity: Option<super::journal::FileIdentity>,
 ) -> CleanupJournal {
     CleanupJournal {
+        child_process: None,
         format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage,
         destination,
@@ -6895,7 +6943,10 @@ fn slt_preflight_accepts_one_pathless_single_stream_record() {
 fn slt_preflight_enforces_declared_size_for_pathless_record() {
     let err = assert_slt_declared_size_within_limit(XZ_PATHLESS_SLT, "/tmp/payload.bin.xz", 99_999)
         .expect_err("declared size above the limit must fail");
-    assert!(err.contains("Archive declares more than"), "{err}");
+    assert_eq!(
+        err,
+        "Not enough free space: this archive needs about 0.0 GiB, and the free space on the destination volume could not be read."
+    );
     let err = assert_slt_archive_members_safe("Size = lots\n\n", "/tmp/payload.bin.xz")
         .expect_err("invalid size must fail");
     assert!(err.contains("invalid declared member size"), "{err}");
@@ -6938,6 +6989,7 @@ fn partial_archive_journal_fixture(
     std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
     std::fs::write(&destination, b"partial").expect("partial dest");
     let journal = CleanupJournal {
+        child_process: None,
         format_version: current_journal_format_version(),
         stage: stage.clone(),
         destination: destination.clone(),
@@ -7157,6 +7209,7 @@ fn acknowledgment_gate_accepts_newer_journal_without_file_access() {
     // the filesystem, while an ordinary journal in the same state is refused.
     let missing = std::path::PathBuf::from("missing-root/destination");
     let base = |format_version: u32| CleanupJournal {
+        child_process: None,
         format_version,
         stage: missing.join(".zinnia-extract-0123456789abcdef0123456789abcdef"),
         destination: missing.clone(),

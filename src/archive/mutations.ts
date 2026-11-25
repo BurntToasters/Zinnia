@@ -51,6 +51,7 @@ import {
   userFacingBackendError,
 } from "../error-hints";
 import { basename } from "../path-display";
+import { looksLikeWindowsPath } from "../extract-path";
 import type { ArchiveInfo } from "../browse-model";
 
 let mutationDialogOpen = false;
@@ -296,15 +297,18 @@ function convertDefaultName(archive: string, format: string): string {
 
 /** Same directory as the source archive, so the save dialog opens there. */
 function siblingPath(archive: string, name: string): string {
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
   const separator = Math.max(
     archive.lastIndexOf("/"),
-    archive.lastIndexOf("\\"),
+    looksLikeWindowsPath(archive) ? archive.lastIndexOf("\\") : -1,
   );
   return separator < 0 ? name : `${archive.slice(0, separator + 1)}${name}`;
 }
 
 function samePath(a: string, b: string): boolean {
-  const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+  const windowsLike = looksLikeWindowsPath(a) || looksLikeWindowsPath(b);
+  const normalize = (value: string) =>
+    (windowsLike ? value.replace(/\\/g, "/") : value).toLowerCase();
   return normalize(a) === normalize(b);
 }
 
@@ -427,8 +431,9 @@ function askConvertOptions(
     };
 
     const showError = (message: string) => {
-      errorLine.textContent = message;
+      // Unhide the alert first so its live-region text change is announced.
       errorLine.hidden = false;
+      errorLine.textContent = message;
     };
     const clearError = () => {
       errorLine.textContent = "";

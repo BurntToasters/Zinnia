@@ -1,20 +1,29 @@
 //! No-replace publish paths (rename, copy, tree).
 
 use super::super::journal::{file_identity, remove_regular_file_if_matches, FileIdentity};
+use super::refresh_identity_after_first_write;
 use super::sync_file_best_effort;
 use super::PublishStrategy;
+
+/// Journal points of a create-new copy. `Created` runs while the object is
+/// empty; `Copied` runs after its bytes are written and before any rename.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CopyJournalPhase {
+    Created,
+    Copied,
+}
 
 #[cfg(test)]
 pub(crate) fn publish_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
-    publish_file_no_replace_with_created(source, target, |_, _| Ok(())).map(|_| ())
+    publish_file_no_replace_with_created(source, target, |_, _, _| Ok(())).map(|_| ())
 }
 pub(super) fn publish_file_no_replace_with_created(
     source: &std::path::Path,
     target: &std::path::Path,
-    on_created: impl FnOnce(&std::path::Path, &FileIdentity) -> Result<(), String>,
+    journal: impl FnMut(&std::path::Path, &FileIdentity, CopyJournalPhase) -> Result<(), String>,
 ) -> Result<PublishStrategy, String> {
     let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
     // Same as directory fsync: some Windows setups deny FlushFileBuffers.
@@ -25,7 +34,8 @@ pub(super) fn publish_file_no_replace_with_created(
     // Stage directories are siblings of their destinations, so rename is a
     // same-filesystem atomic move. Every publication path refuses an existing
     // target, and no error path unlinks a pathname whose identity may have changed.
-    // Only the final create-new copy fallback can expose bytes incrementally.
+    // Only the create-new copy fallback writes bytes incrementally, and only into
+    // a hidden sibling that is renamed into place after it is durable.
     match rename_file_no_replace(source, target) {
         Ok(()) => Ok(PublishStrategy::DirectRename),
         Err(rename_error) => {
@@ -40,7 +50,7 @@ pub(super) fn publish_file_no_replace_with_created(
                 // existing destination. The recovery journal removes a partial
                 // file after interruption; only this fallback loses atomic
                 // visibility because the filesystem provides no atomic primitive.
-                copy_file_no_replace_with_created(source, target, on_created).map_err(|copy_error| {
+                publish_copy_fallback_with_created(source, target, journal).map_err(|copy_error| {
                     format!(
                         "Could not publish archive output {} without replacement: {rename_error}; hard-link fallback failed: {link_error}; exclusive-copy fallback failed: {copy_error}",
                         target.display()
@@ -61,19 +71,48 @@ pub(super) fn publish_file_no_replace_with_created(
     }
 }
 
+/// Exclusive-copy fallback that never exposes bytes at the final name. The copy
+/// lands in a hidden `.zinnia-publish-<token>` sibling, is journaled through
+/// `journal` while it is empty and again after its bytes are written, and is
+/// moved into place with the no-replace rename. A failed move removes the temp
+/// only if it is still our exact object.
+fn publish_copy_fallback_with_created(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    journal: impl FnMut(&std::path::Path, &FileIdentity, CopyJournalPhase) -> Result<(), String>,
+) -> Result<(), String> {
+    let temp = target.with_file_name(format!(
+        ".zinnia-publish-{}",
+        super::super::staging::random_token()?
+    ));
+    let identity = copy_file_no_replace_identity(source, &temp, journal)?;
+    if let Err(rename_error) = rename_file_no_replace(&temp, target) {
+        return Err(exclusive_copy_cleanup_error(&temp, &identity, rename_error));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn copy_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
-    copy_file_no_replace_with_created(source, target, |_, _| Ok(()))
+    copy_file_no_replace_with_created(source, target, |_, _, _| Ok(()))
 }
 
 pub(super) fn copy_file_no_replace_with_created(
     source: &std::path::Path,
     target: &std::path::Path,
-    on_created: impl FnOnce(&std::path::Path, &FileIdentity) -> Result<(), String>,
+    journal: impl FnMut(&std::path::Path, &FileIdentity, CopyJournalPhase) -> Result<(), String>,
 ) -> Result<(), String> {
+    copy_file_no_replace_identity(source, target, journal).map(drop)
+}
+
+fn copy_file_no_replace_identity(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    mut journal: impl FnMut(&std::path::Path, &FileIdentity, CopyJournalPhase) -> Result<(), String>,
+) -> Result<FileIdentity, String> {
     let mut source_file = crate::path_safety::open_regular_file_nofollow(source)?;
     #[cfg(unix)]
     let source_metadata = source_file.metadata().map_err(|error| error.to_string())?;
@@ -98,9 +137,9 @@ pub(super) fn copy_file_no_replace_with_created(
     let mut target_file = options.open(target).map_err(|error| error.to_string())?;
     // Capture the identity while our exclusive create handle is still open.
     // If a later copy step fails, cleanup is allowed only for this exact file.
-    let target_identity = file_identity(&target_file)?;
+    let mut target_identity = file_identity(&target_file)?;
     let copy_result = (|| {
-        on_created(target, &target_identity)?;
+        journal(target, &target_identity, CopyJournalPhase::Created)?;
         std::io::copy(&mut source_file, &mut target_file).map_err(|error| error.to_string())?;
         #[cfg(unix)]
         {
@@ -124,123 +163,54 @@ pub(super) fn copy_file_no_replace_with_created(
         }
         #[cfg(windows)]
         copy_windows_times_and_attributes(source, &source_file, target, &target_file, false)?;
-        sync_file_best_effort(&target_file)
+        #[cfg(target_os = "macos")]
+        crate::fs_secure::copy_macos_quarantine_xattr(source, target, Some(&target_file))
+            .map_err(|error| error.to_string())?;
+        sync_file_best_effort(&target_file)?;
+        target_identity = refresh_identity_after_first_write(&target_file, &target_identity, 0)?
+            .ok_or_else(|| {
+                format!(
+                    "Exclusive copy identity changed during copy: {}",
+                    target.display()
+                )
+            })?;
+        journal(target, &target_identity, CopyJournalPhase::Copied)
     })();
+    if copy_result.is_err() {
+        if let Ok(Some(identity)) =
+            refresh_identity_after_first_write(&target_file, &target_identity, 0)
+        {
+            target_identity = identity;
+        }
+    }
     drop(target_file);
     if let Err(error) = copy_result {
-        return exclusive_copy_cleanup_error(target, &target_identity, error);
+        return Err(exclusive_copy_cleanup_error(
+            target,
+            &target_identity,
+            error,
+        ));
     }
-    let stamp_result = {
-        #[cfg(windows)]
-        {
-            crate::process::copy_windows_zone_identifier(source, target)
-        }
-        #[cfg(target_os = "macos")]
-        {
-            copy_macos_quarantine_xattr(source, target)
-        }
-        #[cfg(not(any(windows, target_os = "macos")))]
-        {
-            let _ = (source, target);
-            Ok(())
-        }
-    };
-    if let Err(error) = stamp_result {
-        return exclusive_copy_cleanup_error(target, &target_identity, error);
+    #[cfg(windows)]
+    if let Err(error) = crate::process::copy_windows_zone_identifier(source, target) {
+        return Err(exclusive_copy_cleanup_error(
+            target,
+            &target_identity,
+            error,
+        ));
     }
-    Ok(())
+    Ok(target_identity)
 }
 
 fn exclusive_copy_cleanup_error(
     target: &std::path::Path,
     target_identity: &FileIdentity,
     error: String,
-) -> Result<(), String> {
+) -> String {
     if let Err(cleanup_error) = remove_regular_file_if_matches(target, target_identity) {
-        return Err(format!(
-            "{error}; partial destination cleanup failed: {cleanup_error}"
-        ));
+        return format!("{error}; partial destination cleanup failed: {cleanup_error}");
     }
-    Err(error)
-}
-
-#[cfg(target_os = "macos")]
-fn copy_macos_quarantine_xattr(
-    source: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<(), String> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    fn c_path(path: &std::path::Path) -> Result<CString, String> {
-        CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| "Path contains an interior NUL.".to_string())
-    }
-
-    let source_c = c_path(source)?;
-    let target_c = c_path(target)?;
-    let name = CString::new("com.apple.quarantine").expect("static xattr name");
-    // SAFETY: `source_c` and `name` are live NUL-terminated CStrings. A null buffer with size 0 is
-    // getxattr's documented size query, which writes nothing.
-    let size = unsafe {
-        libc::getxattr(
-            source_c.as_ptr(),
-            name.as_ptr(),
-            std::ptr::null_mut(),
-            0,
-            0,
-            0,
-        )
-    };
-    if size < 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ENOATTR) {
-            return Ok(());
-        }
-        eprintln!("Could not read com.apple.quarantine: {error}");
-        return Ok(());
-    }
-    let mut buffer = vec![0u8; size as usize];
-    // SAFETY: `buffer` is a live allocation of exactly `buffer.len()` bytes, the same length passed
-    // to getxattr, so the kernel writes only inside it. `source_c` and `name` are live
-    // NUL-terminated CStrings.
-    let read = unsafe {
-        libc::getxattr(
-            source_c.as_ptr(),
-            name.as_ptr(),
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-            0,
-            0,
-        )
-    };
-    if read < 0 {
-        eprintln!(
-            "Could not read com.apple.quarantine: {}",
-            std::io::Error::last_os_error()
-        );
-        return Ok(());
-    }
-    buffer.truncate(read as usize);
-    // SAFETY: `target_c` and `name` are live NUL-terminated CStrings. `buffer` holds the
-    // `buffer.len()` bytes read above, and setxattr only reads them.
-    let written = unsafe {
-        libc::setxattr(
-            target_c.as_ptr(),
-            name.as_ptr(),
-            buffer.as_ptr().cast(),
-            buffer.len(),
-            0,
-            0,
-        )
-    };
-    if written != 0 {
-        return Err(format!(
-            "Could not preserve com.apple.quarantine: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(())
+    error
 }
 
 #[cfg(windows)]
@@ -430,8 +400,11 @@ pub(super) fn copy_tree_with_inherited_acl(
             copy_tree_with_inherited_acl(&source_child, &target_child)?;
             #[cfg(windows)]
             copy_windows_directory_metadata(&source_child, &target_child)?;
+            // Flush each directory after its children and metadata are written,
+            // so a crash cannot keep the parent entry without its contents.
+            crate::fs_secure::sync_directory_nofollow(&target_child)?;
         } else if metadata.is_file() {
-            copy_file_no_replace_with_created(&source_child, &target_child, |_, _| Ok(()))?;
+            copy_file_no_replace_with_created(&source_child, &target_child, |_, _, _| Ok(()))?;
         } else {
             return Err(format!(
                 "Archive contains an unsupported entry: {}",
@@ -472,6 +445,31 @@ pub(crate) fn rename_file_no_replace(
     }
 }
 
+/// Exclusive-rename failure handling for macOS and Linux. Filesystems such as
+/// FAT/exFAT (msdosfs) reject the exclusive primitive with an unsupported errno;
+/// only then does the checked compatibility rename run. Cross-directory renames
+/// on the same filesystem take the same path; EXDEV still fails.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+fn rename_after_exclusive_failure(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    error: std::io::Error,
+) -> Result<(), String> {
+    let unsupported = error.raw_os_error().is_some_and(|code| {
+        [libc::ENOTSUP, libc::EOPNOTSUPP, libc::EINVAL, libc::ENOTTY].contains(&code)
+    });
+    if !unsupported {
+        return Err(error.to_string());
+    }
+    crate::fs_secure::rename_no_replace_with_fallback(source, target)
+        .map_err(|fallback_error| fallback_error.to_string())
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) fn rename_file_no_replace(
     source: &std::path::Path,
@@ -490,18 +488,18 @@ pub(crate) fn rename_file_no_replace(
     }
 
     const RENAME_EXCL: u32 = 0x0000_0004;
-    let source = std::ffi::CString::new(source.as_os_str().as_bytes())
+    let source_c = std::ffi::CString::new(source.as_os_str().as_bytes())
         .map_err(|_| "Archive staging path contains a NUL byte.".to_string())?;
-    let target = std::ffi::CString::new(target.as_os_str().as_bytes())
+    let target_c = std::ffi::CString::new(target.as_os_str().as_bytes())
         .map_err(|_| "Archive output path contains a NUL byte.".to_string())?;
-    // SAFETY: `source` and `target` are NUL-terminated CStrings alive for the call. The declaration
-    // matches macOS `renamex_np(const char *, const char *, unsigned int)`. RENAME_EXCL makes the
-    // call fail, not replace, when the target exists.
-    let result = unsafe { renamex_np(source.as_ptr(), target.as_ptr(), RENAME_EXCL) };
+    // SAFETY: `source_c` and `target_c` are NUL-terminated CStrings alive for the call. The
+    // declaration matches macOS `renamex_np(const char *, const char *, unsigned int)`. RENAME_EXCL
+    // makes the call fail, not replace, when the target exists.
+    let result = unsafe { renamex_np(source_c.as_ptr(), target_c.as_ptr(), RENAME_EXCL) };
     if result == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::last_os_error().to_string())
+        rename_after_exclusive_failure(source, target, std::io::Error::last_os_error())
     }
 }
 
@@ -527,27 +525,27 @@ pub(crate) fn rename_file_no_replace(
 
     const AT_FDCWD: std::ffi::c_int = -100;
     const RENAME_NOREPLACE: u32 = 1;
-    let source = std::ffi::CString::new(source.as_os_str().as_bytes())
+    let source_c = std::ffi::CString::new(source.as_os_str().as_bytes())
         .map_err(|_| "Archive staging path contains a NUL byte.".to_string())?;
-    let target = std::ffi::CString::new(target.as_os_str().as_bytes())
+    let target_c = std::ffi::CString::new(target.as_os_str().as_bytes())
         .map_err(|_| "Archive output path contains a NUL byte.".to_string())?;
-    // SAFETY: `source` and `target` are NUL-terminated CStrings alive for the call. AT_FDCWD
+    // SAFETY: `source_c` and `target_c` are NUL-terminated CStrings alive for the call. AT_FDCWD
     // resolves both paths relative to the working directory, as the path-based API does. The
     // declaration matches renameat2(2), and RENAME_NOREPLACE makes the call fail, not replace, when
     // the target exists.
     let result = unsafe {
         renameat2(
             AT_FDCWD,
-            source.as_ptr(),
+            source_c.as_ptr(),
             AT_FDCWD,
-            target.as_ptr(),
+            target_c.as_ptr(),
             RENAME_NOREPLACE,
         )
     };
     if result == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::last_os_error().to_string())
+        rename_after_exclusive_failure(source, target, std::io::Error::last_os_error())
     }
 }
 

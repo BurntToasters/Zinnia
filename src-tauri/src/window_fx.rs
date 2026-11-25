@@ -28,9 +28,10 @@ fn clear_macos(window: &WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
-/// Sets NSWindow.appearance. Pinning it to Dark/Light stops WKWebView from
-/// following OS appearance changes (prefers-color-scheme), so when the user's
-/// theme is "system" the override is cleared with `set_theme(None)` instead.
+/// Sets the app-wide NSApp appearance. Pinning it to Dark/Light stops WKWebView
+/// from following OS appearance changes (prefers-color-scheme), so when the
+/// user's theme is "system" the override is cleared with `set_theme(None)`
+/// instead. tauri applies this with `[NSApp setAppearance:]`, not per window.
 #[cfg(target_os = "macos")]
 fn apply_macos_appearance(window: &WebviewWindow, dark: bool, follow_system: bool) {
     let theme = if follow_system {

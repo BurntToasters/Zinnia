@@ -277,7 +277,7 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
   place-items: center;
   padding: 20px;
   background: rgb(0 0 0 / 45%);
-  z-index: 10;
+  z-index: 10000;
 }
 
 .extract-input-modal {

@@ -89,7 +89,8 @@ function showPersistentAlertBanner(
       trimmed,
     ].slice(-PERSISTENT_BANNER_MAX_MESSAGES);
   }
-  text.textContent = persistentBannerMessages.join(" ");
+  // Reveal the live region before changing its text so screen readers
+  // announce the message, not just the presence of the banner.
   if (kind !== "error") {
     preservedRecoveryAcknowledgementAvailable = true;
     preservedRecoveryKind = kind;
@@ -97,6 +98,7 @@ function showPersistentAlertBanner(
   banner.hidden =
     persistentBannerMessages.length === 0 &&
     !preservedRecoveryAcknowledgementAvailable;
+  text.textContent = persistentBannerMessages.join(" ");
   if (acknowledge) {
     if (preservedRecoveryAcknowledgementAvailable) {
       acknowledge.hidden = false;
