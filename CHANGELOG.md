@@ -24,9 +24,21 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.7.0-beta.3:`
 
 - **Security:** Convert stops if the archive changes on disk after you open the Convert options. Before this fix, a file replaced by a sync client could be converted without being checked, and an encrypted replacement could be written as an unencrypted copy without asking.
-- **Linux:** AppImage updates write the new AppImage beside the installed one and replace it in one step. An interrupted update no longer leaves the launch path without an AppImage.
+- **macOS:** Fixed extraction and recovery on exFAT and FAT volumes where exclusive renames are unsupported, including AppleDouble (`._*`) sidecar cleanup and placeholder inode handling, so extractions finish without leaving hidden staging folders or locking out the next launch.
+- **macOS:** `Cmd+Q`, Dock Quit, and system logout or shutdown now go through the busy-operation quit guard instead of exiting immediately and leaving an orphaned `7zz` process. Added Close Window (`Cmd+W`) and Full Screen items to the Window menu.
+- **macOS:** Extraction free-space checks now include APFS purgeable space (matching Finder) instead of refusing archives on volumes with reclaimable space.
+- **macOS:** Fixed Basic glass vibrancy layers stacking across theme changes, synced window appearance with the app theme (while still tracking macOS when set to System), and made switching from native fullscreen to Basic exit fullscreen before resizing.
+- **macOS:** Fixed the Finder Sync settings button opening two system windows, matched multi-file Finder opens to command-line routing, added bounded timeouts for default-app registration, and stopped relaunch or Finder Sync registration when running from App Translocation with a message to move `Zinnia.app` to Applications.
+- **macOS:** Default compression save locations now avoid read-only macOS system folders and `.app` interiors instead of applying Windows-only rules, and backslashes in macOS and Linux file names are no longer treated as path separators.
 - **macOS:** The updater compares build numbers as well as versions, so it refuses an older beta of the same release.
-- **macOS:** Each installed copy of Zinnia keeps its own update backup. Updating one copy no longer deletes the recovery backup of another copy in the same folder.
+- **macOS:** Each installed copy of Zinnia keeps its own update backup. Updating one copy no longer deletes the recovery backup of another copy in the same folder. Privileged updates now exchange `Contents` atomically with `renamex_np` before falling back to a two-rename swap.
+- **Linux:** AppImage updates write the new AppImage beside the installed one and replace it in one step. An interrupted update no longer leaves the launch path without an AppImage.
+- **UI:** Opening a header-encrypted archive directly in the quick extract window now prompts for a password and retries after an incorrect password instead of failing with `Break signaled`.
+- **UI:** Native menu actions (Settings, Shortcuts, Licenses) and global shortcuts stay blocked while another dialog or the setup wizard is open. Removing files, running or completing Basic operations, and opening the quick extract password modal now keep keyboard focus on a valid control and isolate background UI.
+- **UI:** Completing or skipping the setup wizard saves immediately so a pending debounced write cannot undo it, and the startup recovery banner clears the macOS traffic lights and acts as a window drag region.
+- **Codebase:** Unreachable or identity-mismatched recovery journals (such as an interrupted job on a disconnected USB drive) can now be acknowledged to clear the journal without touching files, and read-only operations (List, Test, Benchmark) are no longer blocked by a pending recovery journal.
+- **Codebase:** Bound child 7-Zip processes to parent exit (Job Objects on Windows, `PR_SET_PDEATHSIG` on Linux, and recorded child PIDs in recovery journals on macOS) to prevent orphaned 7-Zip workers after an abnormal exit.
+- **Codebase:** Forwarded passwords to the outer pass of compound TAR extractions, fixed a failed 7-Zip probe leaving operations stuck busy until restart, skipped the Windows-only nested reparse-point scan on macOS and Linux, handled unneeded stdin passwords cleanly on broken pipe, and clarified free-space pre-check errors.
 - **Codebase:** Updated Tauri to 2.12.7, Wry to 0.57.3, Tao to 0.37.3, `@tauri-apps/api` to 2.12.5, and `lucide` to 1.76.0.
 
 ## Changes in `v0.7.0-beta.2:`
