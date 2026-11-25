@@ -332,10 +332,7 @@ pub fn is_packaged() -> bool {
     #[cfg(windows)]
     {
         let lower = exe.to_lowercase();
-        if lower.contains("\\target\\debug\\") || lower.contains("\\target\\release\\") {
-            return false;
-        }
-        true
+        !(lower.contains("\\target\\debug\\") || lower.contains("\\target\\release\\"))
     }
 
     #[cfg(target_os = "macos")]
@@ -345,10 +342,7 @@ pub fn is_packaged() -> bool {
 
     #[cfg(target_os = "linux")]
     {
-        if exe.contains("/target/debug/") || exe.contains("/target/release/") {
-            return false;
-        }
-        true
+        !(exe.contains("/target/debug/") || exe.contains("/target/release/"))
     }
 }
 

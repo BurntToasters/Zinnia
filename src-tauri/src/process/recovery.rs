@@ -388,11 +388,10 @@ pub(crate) fn journal_is_preserved_ambiguous_publish(
         return Ok(false);
     };
     let actual_destination_identity = super::journal::path_identity(&journal.destination)?;
-    if !super::journal::file_identities_match(&actual_destination_identity, expected_stage_identity)
-    {
-        return Ok(false);
-    }
-    Ok(true)
+    Ok(super::journal::file_identities_match(
+        &actual_destination_identity,
+        expected_stage_identity,
+    ))
 }
 
 /// Whether acknowledgment may drop this journal without recovering it.

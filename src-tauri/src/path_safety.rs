@@ -20,18 +20,15 @@ pub fn path_is_under_or_equal(root: &Path, candidate: &Path) -> bool {
 
 /// True when the metadata describes a symbolic link or (on Windows) any reparse point.
 pub fn is_link_or_reparse(meta: &Metadata) -> bool {
-    if meta.file_type().is_symlink() {
-        return true;
-    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        meta.file_type().is_symlink() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }
     #[cfg(not(windows))]
     {
-        false
+        meta.file_type().is_symlink()
     }
 }
 

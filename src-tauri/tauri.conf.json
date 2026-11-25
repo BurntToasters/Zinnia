@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zinnia",
-  "version": "0.7.0-beta.3",
+  "version": "0.7.0-beta.4",
   "identifier": "run.rosie.zinnia",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -139,7 +139,7 @@
       "entitlements": "macos/build/Zinnia.entitlements",
       "hardenedRuntime": true,
       "minimumSystemVersion": "15.0",
-      "bundleVersion": "0.7.3003",
+      "bundleVersion": "0.7.3004",
       "files": {
         "PlugIns/ZinniaFinderSync.appex": "macos/build/ZinniaFinderSync.appex"
       }
