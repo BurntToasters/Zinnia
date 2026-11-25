@@ -13,6 +13,7 @@ import {
   type ProgressUpdate,
 } from "../progress-update";
 import { basename } from "../path-display";
+import { looksLikeWindowsPath } from "../extract-path";
 import { rememberRecentArchive } from "./recent";
 
 /** Operation labels stay on screen for the whole run. */
@@ -145,7 +146,11 @@ const COMPLETION_PATH_MAX_CHARACTERS = 48;
 
 function completionPathForDisplay(path: string): string {
   if (path.length <= COMPLETION_PATH_MAX_CHARACTERS) return path;
-  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
+  const separator = Math.max(
+    path.lastIndexOf("/"),
+    looksLikeWindowsPath(path) ? path.lastIndexOf("\\") : -1,
+  );
   if (separator < 0) return path;
   const folder = path.slice(0, separator + 1);
   const name = path.slice(separator + 1);
@@ -227,6 +232,14 @@ function renderBasicCompletion(
       ? document.getElementById("basic-run-compress")
       : document.getElementById("basic-run-extract");
   if (runBtn) (runBtn as HTMLButtonElement).disabled = false;
+
+  // The progress/Cancel controls disappear when the completion sheet takes
+  // over. Move focus to its first action so keyboard users are not stranded.
+  if (getWorkspaceMode() === "basic") {
+    const focusTarget =
+      openDestBtn && !openDestBtn.hidden ? openDestBtn : secondaryBtn;
+    focusTarget?.focus();
+  }
 }
 
 export function hideBasicCompletion(section: "compress" | "extract"): void {
@@ -399,6 +412,7 @@ export function updateBasicRunningState(active: boolean): void {
     "basic-browse-cancel",
   ) as HTMLButtonElement | null;
   if (browseCancel) browseCancel.hidden = !active || !browsing;
+  if (active && browsing) browseCancel?.focus();
   const browseStatus = document.getElementById("basic-browse-status");
   if (browsing) {
     if (browseStatus) {
@@ -425,6 +439,9 @@ export function updateBasicRunningState(active: boolean): void {
     const startedAt = Date.now();
     showBasicProgress(section);
     resetBasicBar(section);
+    // The focused Run control is hidden/disabled for the run; Cancel is the
+    // only action that stays available.
+    document.getElementById(`basic-${section}-cancel`)?.focus();
     // Listen for structured progress events to show determinate progress.
     void listenToOwnWindow<ProgressUpdate>(
       "7z-progress-structured",

@@ -11,6 +11,17 @@ mod windows;
 
 #[cfg(unix)]
 pub use unix::apply_parent_directory_mode;
+#[cfg(target_os = "macos")]
+pub(crate) use unix::copy_macos_quarantine_xattr;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+pub(crate) use unix::rename_no_replace_with_fallback;
+#[cfg(unix)]
+pub(crate) use unix::rename_relative_no_replace_with_fallback;
 #[cfg(windows)]
 pub(crate) use windows::{assert_handle_owned_by_current_user, system32_binary_path};
 
@@ -240,7 +251,7 @@ where
 
         let quarantine_name = quarantine_component()?;
         let quarantine = unix::unix_component(std::ffi::OsStr::new(&quarantine_name))?;
-        unix::rename_relative_no_replace(&directory, &original, &quarantine)?;
+        rename_relative_no_replace_with_fallback(&directory, &original, &quarantine)?;
         let mut quarantined = match unix::open_regular_relative(&directory, &quarantine) {
             Ok(file) => file,
             Err(error) => {
@@ -284,6 +295,10 @@ where
             );
         }
         rustix::fs::unlinkat(&directory, &quarantine, AtFlags::empty())?;
+        // AppleDouble sidecars are the filesystem's xattr storage for the entry
+        // just removed. Cleanup is best effort and never fails quarantine.
+        unix::remove_apple_double_sibling(&directory, &quarantine);
+        unix::remove_apple_double_sibling(&directory, &original);
         sync_file_best_effort(&directory).map_err(io::Error::other)?;
         Ok(true)
     }
@@ -402,7 +417,7 @@ where
         let source_stat = unix::stat_open_file(&source)?;
         let quarantine_name = quarantine_component()?;
         let quarantine = unix::unix_component(std::ffi::OsStr::new(&quarantine_name))?;
-        unix::rename_relative_no_replace(&directory, &original, &quarantine)?;
+        rename_relative_no_replace_with_fallback(&directory, &original, &quarantine)?;
         let quarantined = match unix::open_directory_relative(&directory, &quarantine) {
             Ok(file) => file,
             Err(error) => {
@@ -436,6 +451,10 @@ where
         }
         drop(quarantined);
         rustix::fs::unlinkat(&directory, &quarantine, AtFlags::REMOVEDIR)?;
+        // The removed directory's own xattrs may have left `._` sidecars beside
+        // either name; they are cleanup-only metadata, never a fatal entry.
+        unix::remove_apple_double_sibling(&directory, &quarantine);
+        unix::remove_apple_double_sibling(&directory, &original);
         sync_file_best_effort(&directory).map_err(io::Error::other)?;
         Ok(true)
     }

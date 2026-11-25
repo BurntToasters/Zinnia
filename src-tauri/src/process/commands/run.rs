@@ -466,9 +466,28 @@ fn find_single_compound_tar(root: &std::path::Path) -> Result<std::path::PathBuf
     Ok(file)
 }
 
+/// The caller's password switches, as `spawn` and the member listing read them.
+/// Same selection rule as `prepare_password_transport`, so both paths agree.
+fn caller_password_switches(args: &[String]) -> Vec<String> {
+    let switch_end = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    args.iter()
+        .take(switch_end)
+        .skip(1)
+        .filter(|arg| {
+            arg.get(..2)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"))
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn compound_tar_outer_extract_args(
     snapshot: &std::path::Path,
     outer_stage: &std::path::Path,
+    password_switches: &[String],
 ) -> Vec<String> {
     let mut outer_args = vec![
         "x".to_string(),
@@ -476,9 +495,10 @@ pub(crate) fn compound_tar_outer_extract_args(
         "-snld10".to_string(),
         "-aou".to_string(),
         format!("-o{}", outer_stage.to_string_lossy()),
-        "--".to_string(),
-        snapshot.to_string_lossy().into_owned(),
     ];
+    outer_args.extend(password_switches.iter().cloned());
+    outer_args.push("--".to_string());
+    outer_args.push(snapshot.to_string_lossy().into_owned());
     harden_7z_args(&mut outer_args);
     apply_backend_link_switches(&mut outer_args);
     outer_args
@@ -492,6 +512,7 @@ pub(super) async fn prepare_compound_tar_snapshot(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
     cleanup_plan: &mut CleanupPlan,
+    caller_args: &[String],
 ) -> Result<(), String> {
     let snapshot = cleanup_plan.staged_input_archive.clone().ok_or_else(|| {
         "Compound TAR extraction is missing its private input snapshot.".to_string()
@@ -506,7 +527,11 @@ pub(super) async fn prepare_compound_tar_snapshot(
         .map_err(|error| format!("Could not create compound TAR staging: {error}"))?;
 
     let result = async {
-        let outer_args = compound_tar_outer_extract_args(&snapshot, &outer_stage);
+        let outer_args = compound_tar_outer_extract_args(
+            &snapshot,
+            &outer_stage,
+            &caller_password_switches(caller_args),
+        );
         let (_, _, outer_manifest) = assert_extract_archive_members_safe_with_summary(
             app,
             state,
@@ -826,19 +851,24 @@ pub(super) async fn run_7z_inner(
     }
     abort_cancelled_preparation(&state)?;
 
+    // Read-only commands never touch an interrupted transaction's stage, so an
+    // unresolved journal must not block browsing, testing, or benchmarking.
+    let requires_recovery = !matches!(args.first().map(String::as_str), Some("l" | "t" | "b"));
     // Startup recovery may take time on a large interrupted transaction. The
     // operation already owns its prepare slot, so Cancel is meaningful here.
     let recovery_started = std::time::Instant::now();
-    if let Err(error) = wait_for_startup_recovery().await {
-        release_prepare_slot_best_effort(&state);
-        return Err(error);
-    }
-    abort_cancelled_preparation(&state)?;
+    if requires_recovery {
+        if let Err(error) = wait_for_startup_recovery().await {
+            release_prepare_slot_best_effort(&state);
+            return Err(error);
+        }
+        abort_cancelled_preparation(&state)?;
 
-    let recovery_app = app.clone();
-    let recovery_result =
-        match tokio::task::spawn_blocking(move || recover_interrupted_transaction(&recovery_app))
-            .await
+        let recovery_app = app.clone();
+        let recovery_result = match tokio::task::spawn_blocking(move || {
+            recover_interrupted_transaction(&recovery_app)
+        })
+        .await
         {
             Ok(result) => result,
             Err(error) => {
@@ -846,11 +876,12 @@ pub(super) async fn run_7z_inner(
                 return Err(format!("Archive recovery worker failed: {error}"));
             }
         };
-    if let Err(error) = recovery_result {
-        release_prepare_slot_best_effort(&state);
-        return Err(format!(
-            "A previous archive transaction still requires recovery: {error}"
-        ));
+        if let Err(error) = recovery_result {
+            release_prepare_slot_best_effort(&state);
+            return Err(format!(
+                "A previous archive transaction still requires recovery: {error}"
+            ));
+        }
     }
     if let Some(diagnostics) = io_diagnostics.as_mut() {
         diagnostics.phase_times.recovery = elapsed_ms(recovery_started);
@@ -957,7 +988,9 @@ pub(super) async fn run_7z_inner(
     }
 
     if compound_tar_operation {
-        if let Err(error) = prepare_compound_tar_snapshot(&app, &state, &mut cleanup_plan).await {
+        if let Err(error) =
+            prepare_compound_tar_snapshot(&app, &state, &mut cleanup_plan, &args).await
+        {
             return Err(finalize_preparation_error(
                 &state,
                 &cleanup_plan,
@@ -1199,6 +1232,22 @@ pub(super) async fn run_7z_inner(
                     ));
                 }
                 Ok(false) => {}
+            }
+        }
+        // Startup recovery can only stop this child if the journal names it,
+        // so record it before anything else can fail. Read-only commands write
+        // no journal and have no stage for an orphan to corrupt.
+        let transactional =
+            cleanup_plan.staged_extract.is_some() || cleanup_plan.staged_archive.is_some();
+        if transactional {
+            if let Err(error) = super::super::journal::record_child_process(&app, child.id()) {
+                terminate_registered_child_async(&app, &child).await?;
+                return Err(finalize_preparation_error(
+                    &state,
+                    &cleanup_plan,
+                    Some(&mut journal_guard),
+                    error,
+                ));
             }
         }
 
@@ -1726,9 +1775,14 @@ pub(super) async fn probe_7z_inner(
 
     match state.0.lock() {
         Ok(mut process) => {
-            if process.owner_label.as_deref() == Some(window.label())
-                && (result.is_ok() || process.child.is_none())
-            {
+            // Release for the owner whether the probe succeeded or failed. The
+            // only held child is one that is still running after a failed
+            // terminate, and that keeps the slot until it exits.
+            let child_exited = process
+                .child
+                .as_ref()
+                .is_none_or(|child| matches!(child.try_wait(), Ok(Some(_))));
+            if process.owner_label.as_deref() == Some(window.label()) && child_exited {
                 process.child = None;
                 process.release_prepare_slot();
             }

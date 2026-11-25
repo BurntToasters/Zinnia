@@ -1,6 +1,23 @@
 import { $ } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 
+/**
+ * True while any sheet or the setup wizard owns the screen. Every modal overlay
+ * (settings, convert, selective, preview, licenses, shortcuts, input) and the
+ * wizard blocks the global shortcuts and native menu sheets, so Tab inside an
+ * invisible lower sheet cannot run behind the visible one. Pass an overlay id
+ * to ignore that one sheet, e.g. so Settings can toggle itself closed.
+ */
+export function isBlockingModalOpen(ignoreOverlayId?: string): boolean {
+  const open = document.querySelectorAll(
+    ".modal-overlay:not([hidden]), .setup-wizard-overlay:not([hidden])",
+  );
+  for (const el of open) {
+    if (el.id !== ignoreOverlayId) return true;
+  }
+  return false;
+}
+
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;

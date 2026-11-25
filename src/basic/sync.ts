@@ -18,6 +18,7 @@ import {
   outputPathForFormatChange,
   resolveOutputArchiveAutofill,
   resolveExtractDestinationAutofill,
+  looksLikeWindowsPath,
 } from "../extract-path";
 import { getCompressionSecuritySupport } from "../compression-security";
 import { hideBasicCompletion, hideBasicProgress } from "./progress";
@@ -71,6 +72,7 @@ export function setBasicView(view: BasicView): void {
   ) {
     return;
   }
+  const previousView = currentBasicView;
   currentBasicView = view;
   const views = document.querySelectorAll<HTMLElement>(
     "#basic-workspace .basic-view",
@@ -90,6 +92,21 @@ export function setBasicView(view: BasicView): void {
       el.setAttribute("aria-selected", String(isActive));
       el.tabIndex = isActive ? 0 : -1;
     });
+  }
+
+  // Going Home hides the toolbar (and the Back control in it). Move focus to
+  // the visible Home target instead of leaving it on a hidden element.
+  if (view === "home" && previousView !== "home") {
+    const active = document.activeElement;
+    const focusInBasic =
+      active instanceof HTMLElement && active.closest("#basic-workspace");
+    const focusLost =
+      !(active instanceof HTMLElement) ||
+      active === document.body ||
+      !active.isConnected;
+    if (focusInBasic || focusLost) {
+      document.getElementById("basic-dropzone")?.focus();
+    }
   }
 
   if (view === "compress") {
@@ -400,6 +417,20 @@ export function refreshBasicArchiveInfo(): void {
   else if (currentBasicView === "browse") updateBasicBrowseInfo();
 }
 
+/** After a remove re-renders the list, keep keyboard focus on a Remove button. */
+function focusBasicInputRemove(index: number): void {
+  const list = document.getElementById("basic-input-list");
+  const buttons = list?.querySelectorAll<HTMLButtonElement>(
+    ".basic-file-item__remove",
+  );
+  const target = buttons?.[index] ?? buttons?.[buttons.length - 1];
+  if (target) {
+    target.focus();
+    return;
+  }
+  document.getElementById("basic-empty-input-picker")?.focus();
+}
+
 export function renderBasicInputs(): void {
   if (getWorkspaceMode() !== "basic") return;
   rederiveBasicDestinations();
@@ -459,6 +490,7 @@ export function renderBasicInputs(): void {
       }
       state.inputs.splice(index, 1);
       renderInputs();
+      focusBasicInputRemove(index);
     });
 
     item.appendChild(pathEl);
@@ -609,7 +641,11 @@ function renderDestinationRow(
     if (value === "") output.removeAttribute("title");
     else output.title = value;
   }
-  const sep = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
+  const sep = Math.max(
+    value.lastIndexOf("/"),
+    looksLikeWindowsPath(value) ? value.lastIndexOf("\\") : -1,
+  );
   if (folder)
     folder.textContent = value !== "" && sep > 0 ? value.slice(0, sep) : "";
   if (name) {

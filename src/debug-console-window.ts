@@ -51,8 +51,10 @@ async function syncThemeAndFx(): Promise<void> {
 
   const enabled = supports && effectsEnabled;
   document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
+  // Only "system" clears the app-global native appearance; explicit themes pin it.
+  const followSystem = themePref === "system";
   try {
-    await invoke("set_workspace_window_fx", { enabled, dark });
+    await invoke("set_workspace_window_fx", { enabled, dark, followSystem });
   } catch {
     // CSS still paints correctly if native vibrancy is unavailable.
   }

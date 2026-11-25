@@ -37,6 +37,7 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
     const MENU_SHORTCUTS: &str = "menu-shortcuts";
     const MENU_SUPPORT: &str = "menu-support";
     const MENU_LICENSES: &str = "menu-licenses";
+    const MENU_QUIT: &str = "menu-quit";
 
     let check_updates = MenuItem::with_id(
         app,
@@ -65,6 +66,11 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
     let licenses = MenuItem::with_id(app, MENU_LICENSES, "Licenses", true, None::<&str>)
         .map_err(|e| e.to_string())?;
 
+    // Custom instead of the predefined Quit: that one sends `terminate:`, which
+    // skips ExitRequested and with it the busy-quit guard.
+    let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Zinnia", true, Some("CmdOrCtrl+Q"))
+        .map_err(|e| e.to_string())?;
+
     let about = AboutMetadata {
         name: Some("Zinnia".into()),
         version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -85,7 +91,7 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
         .hide_others()
         .show_all()
         .separator()
-        .quit()
+        .item(&quit)
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -103,6 +109,9 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
     let window_submenu = SubmenuBuilder::new(app, "Window")
         .minimize()
         .maximize()
+        .fullscreen()
+        .separator()
+        .close_window()
         .separator()
         .bring_all_to_front()
         .build()
@@ -148,11 +157,152 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
                     }
                 }
             }
+            MENU_QUIT => {
+                // Same route as the tray Quit: leave extract warm-idle first, or
+                // ExitRequested would keep the process resident.
+                if crate::launch::should_keep_extract_warm(app) {
+                    crate::launch::leave_extract_warm(app);
+                    crate::launch::EXTRACT_ONLY_LAUNCH
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                app.exit(0);
+            }
             _ => {}
         }
     });
 
+    install_terminate_hook(app);
+
     Ok(())
+}
+
+/// Set once at startup so the NSApplication delegate hook can reach the app.
+#[cfg(target_os = "macos")]
+static TERMINATE_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+/// True between `NSTerminateLater` and `replyToApplicationShouldTerminate:`.
+#[cfg(target_os = "macos")]
+static TERMINATE_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True while AppKit is waiting for an answer to `applicationShouldTerminate:`.
+#[cfg(target_os = "macos")]
+pub(crate) fn system_terminate_pending() -> bool {
+    TERMINATE_PENDING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn system_terminate_pending() -> bool {
+    false
+}
+
+/// Answers a pending `NSTerminateLater`. Must run on the main thread.
+#[cfg(target_os = "macos")]
+pub(crate) fn resolve_system_terminate(should_terminate: bool) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        eprintln!("Could not answer applicationShouldTerminate: not on the main thread.");
+        return;
+    };
+    if !TERMINATE_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(should_terminate);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn resolve_system_terminate(_should_terminate: bool) {}
+
+/// Bounds a logout/shutdown while the normal quit guard asks the user. AppKit
+/// stays in `NSTerminateLater` until an answer arrives; a dismissed prompt has
+/// no backend callback, so answer NO rather than leaving the system waiting.
+#[cfg(target_os = "macos")]
+pub(crate) fn bound_system_terminate_prompt(app: &AppHandle) {
+    if !system_terminate_pending() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        let _ = handle.run_on_main_thread(move || resolve_system_terminate(false));
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn bound_system_terminate_prompt(_app: &AppHandle) {}
+
+/// `applicationShouldTerminate:` for Dock Quit, logout and shutdown. Those send
+/// `terminate:` to NSApp and never reach `ExitRequested`. The same facts that
+/// `ExitRequested` reads decide here. A busy slot defers the decision and hands
+/// it to `app.exit(0)`, which runs the `ExitRequested` guard. `app.exit` does
+/// not call `terminate:` again, so this cannot loop.
+///
+/// Returning `NSTerminateCancel` from here makes AppKit treat a pending logout
+/// or shutdown as refused, which aborts the whole system action. `NSTerminateLater`
+/// keeps it waiting while the guard runs; the guard then answers YES or NO.
+#[cfg(target_os = "macos")]
+extern "C-unwind" fn application_should_terminate(
+    _this: *mut objc2::runtime::AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _sender: *mut objc2::runtime::AnyObject,
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    use objc2_app_kit::NSApplicationTerminateReply;
+
+    let Some(app) = TERMINATE_APP.get() else {
+        return NSApplicationTerminateReply::TerminateNow;
+    };
+    if !crate::should_prevent_exit(&crate::read_slot_facts(app), crate::exit_forced()) {
+        return NSApplicationTerminateReply::TerminateNow;
+    }
+    TERMINATE_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
+    NSApplicationTerminateReply::TerminateLater
+}
+
+/// Adds `applicationShouldTerminate:` to the class of tao's NSApplication
+/// delegate. tao implements only `applicationWillTerminate:`.
+#[cfg(target_os = "macos")]
+fn install_terminate_hook(app: &AppHandle) {
+    use objc2::runtime::{AnyClass, AnyObject, Imp};
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationTerminateReply};
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        eprintln!("Skipped applicationShouldTerminate: hook: not on the main thread.");
+        return;
+    };
+    let _ = TERMINATE_APP.set(app.clone());
+    let ns_app = NSApplication::sharedApplication(mtm);
+    let Some(delegate) = ns_app.delegate() else {
+        eprintln!("Skipped applicationShouldTerminate: hook: NSApp has no delegate.");
+        return;
+    };
+    let object: &AnyObject = delegate.as_ref();
+    let class = object.class() as *const AnyClass as *mut AnyClass;
+    let hook: extern "C-unwind" fn(
+        *mut AnyObject,
+        objc2::runtime::Sel,
+        *mut AnyObject,
+    ) -> NSApplicationTerminateReply = application_should_terminate;
+    // SAFETY: `hook` has the signature the type encoding below describes. The
+    // transmute only changes the fn-pointer type to the `Imp` that
+    // `class_addMethod` takes, and both are the same thin function pointer.
+    let imp: Imp = unsafe { std::mem::transmute::<_, Imp>(hook) };
+    // SAFETY: `class` is the live class of NSApp's delegate. This runs on the
+    // main thread during setup, before the run loop starts. The encoding
+    // "Q24@0:8@16" is NSUInteger return, self, _cmd, and the sender argument.
+    let added = unsafe {
+        objc2::ffi::class_addMethod(
+            class,
+            objc2::sel!(applicationShouldTerminate:),
+            imp,
+            c"Q24@0:8@16".as_ptr(),
+        )
+    };
+    if !added.as_bool() {
+        eprintln!("applicationShouldTerminate: already present on the app delegate; leaving it.");
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

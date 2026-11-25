@@ -5,6 +5,7 @@ import { browser, $ } from "@wdio/globals";
 import {
   applyIncomingPaths,
   assertOsIntegrationTabMatchesBackend,
+  clickBasicBrowseContentsAndAwaitLoading,
   clickBasicRecentArchive,
   clickBasicRunExtract,
   clickPowerExtractPasswordToggle,
@@ -65,24 +66,7 @@ describe("ui surfaces", function () {
       "Basic browse did not finish listing a valid archive",
     );
 
-    let sawLoading = false;
-    await browser.execute(() => {
-      document.getElementById("basic-browse-contents")?.click();
-    });
-    await browser.waitUntil(
-      async () => {
-        const state = await basicBrowseStatusState();
-        if (state.loading === 1 || state.busy === 1) sawLoading = true;
-        return sawLoading && state.busy === 0 && state.loading === 0
-          ? "ready"
-          : false;
-      },
-      {
-        timeout: 120_000,
-        timeoutMsg:
-          "Basic browse did not show loading then clear for a valid archive",
-      },
-    );
+    await clickBasicBrowseContentsAndAwaitLoading();
     const idle = await basicBrowseStatusState();
     assert.equal(idle.error, 0);
     assert.ok(

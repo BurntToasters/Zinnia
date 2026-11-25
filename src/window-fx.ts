@@ -26,9 +26,11 @@ export async function syncWorkspaceWindowFx(): Promise<void> {
 
   document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  // Only "system" clears the native appearance override; explicit themes pin it.
+  const followSystem = state.currentSettings.theme === "system";
 
   try {
-    await invoke("set_workspace_window_fx", { enabled, dark });
+    await invoke("set_workspace_window_fx", { enabled, dark, followSystem });
   } catch {
     // Appearance remains correct via CSS even if the native effect is unavailable.
   }

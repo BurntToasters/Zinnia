@@ -369,6 +369,9 @@ pub use integration_status::get_os_integration_status;
 #[cfg(target_os = "macos")]
 pub use integration_status::register_macos_finder_sync;
 
+#[cfg(target_os = "macos")]
+pub(crate) use integration_status::running_from_app_translocation;
+
 #[doc(hidden)]
 pub use defaults_cmds::{
     __cmd__enable_finder_sync, __cmd__open_finder_services_settings,

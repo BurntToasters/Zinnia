@@ -6,8 +6,8 @@ use tauri::Url;
 use tauri::{Emitter, Manager};
 
 use super::extract_window::{
-    has_extract_windows, leave_extract_warm, open_main_from_extract_warm, show_main_window,
-    spawn_extract_window, EXTRACT_WARM_IDLE_ACTIVE,
+    bump_extract_warm_idle_generation, has_extract_windows, leave_extract_warm,
+    open_main_from_extract_warm, show_main_window, spawn_extract_window, EXTRACT_WARM_IDLE_ACTIVE,
 };
 use super::open_path::normalize_open_path_arg;
 use super::{
@@ -441,8 +441,15 @@ where
         paths.push(path);
     }
 
+    let mode = resolve_open_mode(&paths, mode);
+    (paths, mode)
+}
+
+/// Mode selection shared by argv and Finder/`RunEvent::Opened` opens so both
+/// entry points pick the same mode for the same paths.
+pub(crate) fn resolve_open_mode(paths: &[String], mut mode: String) -> String {
     if mode == "compress" {
-        return (paths, mode);
+        return mode;
     }
 
     if mode != "extract"
@@ -452,14 +459,19 @@ where
         mode = "extract".to_string();
     }
 
-    if should_use_extract_window(&paths, &mode) || mode == "extract-explicit" {
+    if should_use_extract_window(paths, &mode) || mode == "extract-explicit" {
         mode = "extract".to_string();
     }
 
-    (paths, mode)
+    mode
 }
 
 pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) -> bool {
+    // Every file-open producer (Finder association, Services, Finder Sync,
+    // second instance) reaches this point. Invalidate a queued warm-idle exit
+    // before deciding which window to reuse, or the exit can drop this request.
+    bump_extract_warm_idle_generation();
+
     if paths.is_empty() {
         // Second-instance activation with no paths while warm: reopen the UI.
         if EXTRACT_WARM_IDLE_ACTIVE.load(Ordering::SeqCst)
@@ -577,7 +589,8 @@ pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
         .map(|path| path.to_string_lossy().to_string())
         .collect();
 
-    let _ = route_open_request(app, paths, String::new());
+    let mode = resolve_open_mode(&paths, String::new());
+    let _ = route_open_request(app, paths, mode);
 }
 
 /// A second instance forwards its argv to this process, whose working

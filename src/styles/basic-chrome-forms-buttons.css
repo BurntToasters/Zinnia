@@ -165,10 +165,12 @@
   font-size: var(--basic-font);
   color: var(--text);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
 .basic-toggle input {
+  flex: 0 0 auto;
   margin: 0;
 }
 
@@ -274,6 +276,7 @@
   cursor: pointer;
   font-size: var(--basic-label);
   font-weight: 600;
+  -webkit-user-select: none;
   user-select: none;
   list-style: none;
   display: flex;

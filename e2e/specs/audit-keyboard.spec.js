@@ -4,11 +4,14 @@ import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
 import {
   applyIncomingPaths,
+  cancelInputModal,
   clickBasicRunExtract,
   dismissToasts,
   dispatchDocumentKey,
   domValue,
+  preparePowerPresetPanel,
   setSelectValue,
+  isInputModalOpen,
   isShortcutsOverlayOpen,
   openBasicBrowseForArchive,
   openBasicRecentsMenu,
@@ -558,6 +561,64 @@ describe("audit keyboard", function () {
       focusAfterEsc: trigger,
       before,
       after,
+    });
+  });
+
+  it("native Settings, Shortcuts and Licenses menu actions wait while the input modal is open", async () => {
+    await preparePowerPresetPanel();
+    await browser.execute(() => {
+      document.getElementById("save-preset")?.click();
+    });
+    await browser.waitUntil(async () => isInputModalOpen(), {
+      timeout: 10_000,
+      timeoutMsg: "Save preset did not open the input modal",
+    });
+
+    // The menu listener calls the same handler as the `app-menu` event.
+    const dispatchMenu = (action) =>
+      browser.execute((name) => {
+        window.__ZINNIA_E2E__.dispatchAppMenuAction(name);
+      }, action);
+    await dispatchMenu("menu-settings");
+    await dispatchMenu("menu-shortcuts");
+    await dispatchMenu("menu-licenses");
+    await browser.pause(300);
+    const blocked = {
+      inputModalOpen: await isInputModalOpen(),
+      settingsOpen: await isSettingsOverlayOpen(),
+      shortcutsOpen: await isShortcutsOverlayOpen(),
+      licensesOpen: await browser.execute(
+        () => document.getElementById("licenses-overlay")?.hidden === false,
+      ),
+    };
+    assert.deepEqual(blocked, {
+      inputModalOpen: true,
+      settingsOpen: false,
+      shortcutsOpen: false,
+      licensesOpen: false,
+    });
+
+    await cancelInputModal();
+    await browser.waitUntil(async () => !(await isInputModalOpen()), {
+      timeout: 10_000,
+      timeoutMsg: "Cancel did not close the input modal",
+    });
+    await dispatchMenu("menu-settings");
+    await browser.waitUntil(async () => isSettingsOverlayOpen(), {
+      timeout: 10_000,
+      timeoutMsg: "menu Settings did not open once the modal closed",
+    });
+    const afterCancel = { settingsOpen: await isSettingsOverlayOpen() };
+    await dispatchDocumentKey("Escape");
+    await browser.waitUntil(async () => !(await isSettingsOverlayOpen()), {
+      timeout: 10_000,
+      timeoutMsg: "Esc did not close Settings opened from the menu",
+    });
+
+    writeEvidence(EVIDENCE_DIR, "audit-keyboard-menu-modal-guard", {
+      scenario: "menu-actions-blocked-by-input-modal",
+      blocked,
+      afterCancel,
     });
   });
 });

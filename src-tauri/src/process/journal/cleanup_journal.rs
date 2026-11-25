@@ -154,7 +154,21 @@ pub(crate) struct CleanupJournal {
     pub(crate) extract_phase: Option<ExtractJournalPhase>,
     #[serde(default)]
     pub(crate) archive_phase: Option<ArchiveJournalPhase>,
+    /// Live 7-Zip child registered for this transaction. Optional so journals
+    /// written before it existed still parse. Startup recovery stops a matching
+    /// orphan before any rollback touches the stage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) child_process: Option<ChildProcessRecord>,
 }
+
+/// Pid plus start time identify one process. A pid alone can be reused after a
+/// crash, so recovery signals only when both values still match.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ChildProcessRecord {
+    pub(crate) pid: u32,
+    pub(crate) start_time: u64,
+}
+
 pub(crate) fn effective_move_identity_log_identity(
     stage: &std::path::Path,
     expected: Option<&FileIdentity>,
@@ -470,12 +484,18 @@ pub(crate) fn cleanup_journal_path(app: &tauri::AppHandle) -> Result<std::path::
 pub(crate) fn read_cleanup_journal_any_version_at(
     path: &std::path::Path,
 ) -> Result<Option<CleanupJournal>, String> {
+    read_cleanup_journal_any_version_result_at(path).map_err(|failure| failure.message)
+}
+
+fn read_cleanup_journal_any_version_result_at(
+    path: &std::path::Path,
+) -> Result<Option<CleanupJournal>, RecoveryFailure> {
     let Some(json) = read_bounded_nofollow_text(path, MAX_RECOVERY_JOURNAL_BYTES)? else {
         return Ok(None);
     };
-    serde_json::from_str(&json)
-        .map(Some)
-        .map_err(|error| format!("Could not parse recovery journal: {error}"))
+    serde_json::from_str(&json).map(Some).map_err(|error| {
+        RecoveryFailure::acknowledgeable(format!("Could not parse recovery journal: {error}"))
+    })
 }
 
 /// Refuse a journal this build cannot interpret. The message says the journal
@@ -550,6 +570,11 @@ pub enum RecoveryKind {
 pub struct RecoveryFailure {
     pub kind: RecoveryKind,
     pub message: String,
+    /// Not sent to the frontend. Set only where recovery proved that dropping
+    /// the journal leaves every user file as it is, so acknowledgment may clear
+    /// it without recovering it.
+    #[serde(skip)]
+    pub(crate) acknowledgeable: bool,
 }
 
 impl RecoveryFailure {
@@ -557,11 +582,22 @@ impl RecoveryFailure {
         Self {
             kind,
             message: message.into(),
+            acknowledgeable: false,
         }
     }
 
     pub fn error(message: impl Into<String>) -> Self {
         Self::new(RecoveryKind::Error, message)
+    }
+
+    /// Offer acknowledgment (ambiguous kind shows the button) for a failure
+    /// that left the journal unrecoverable but the user files untouched.
+    pub(crate) fn acknowledgeable(message: impl Into<String>) -> Self {
+        Self {
+            kind: RecoveryKind::Ambiguous,
+            message: message.into(),
+            acknowledgeable: true,
+        }
     }
 }
 
@@ -595,7 +631,7 @@ pub(crate) fn read_cleanup_journal_at(
 pub(crate) fn read_recoverable_cleanup_journal_at(
     path: &std::path::Path,
 ) -> Result<Option<CleanupJournal>, RecoveryFailure> {
-    let Some(journal) = read_cleanup_journal_any_version_at(path)? else {
+    let Some(journal) = read_cleanup_journal_any_version_result_at(path)? else {
         return Ok(None);
     };
     check_journal_format_supported(&journal)?;
@@ -653,6 +689,7 @@ pub(crate) fn write_cleanup_journal(
             extract_stage_identity: Some(captured_plan_stage_identity(plan, stage)?),
             extract_phase: Some(ExtractJournalPhase::InProgress),
             archive_phase: None,
+            child_process: None,
         })
     } else if let Some((staged_archive, destination)) = &plan.staged_archive {
         let stage = staged_archive
@@ -692,6 +729,7 @@ pub(crate) fn write_cleanup_journal(
             extract_stage_identity: Some(stage_identity),
             extract_phase: None,
             archive_phase: Some(ArchiveJournalPhase::InProgress),
+            child_process: None,
         })
     } else {
         None
@@ -767,6 +805,7 @@ pub(crate) fn update_archive_journal(
         extract_stage_identity: Some(stage_identity),
         extract_phase: None,
         archive_phase: Some(ArchiveJournalPhase::InProgress),
+        child_process: existing.child_process,
     };
     let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&journal_path, &json)
@@ -1083,6 +1122,124 @@ fn remove_cleanup_journal_file(path: &std::path::Path) -> Result<(), String> {
 
 pub(crate) fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
     clear_cleanup_journal_at(&cleanup_journal_path(app)?)
+}
+
+/// Record the registered 7-Zip child in the active journal. A child that has
+/// already exited has nothing to stop, so it is not recorded.
+#[cfg(unix)]
+pub(crate) fn record_child_process(app: &tauri::AppHandle, pid: u32) -> Result<(), String> {
+    let Some(start_time) = process_start_time(pid)? else {
+        return Ok(());
+    };
+    let path = cleanup_journal_path(app)?;
+    let mut journal = read_cleanup_journal_at(&path)?.ok_or_else(|| {
+        "Recovery journal disappeared before the 7-Zip child was recorded.".to_string()
+    })?;
+    journal.child_process = Some(ChildProcessRecord { pid, start_time });
+    let json = encode_cleanup_journal(&mut journal)?;
+    crate::settings_store::atomic_write_text(&path, &json)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn record_child_process(_app: &tauri::AppHandle, _pid: u32) -> Result<(), String> {
+    Ok(())
+}
+
+/// Start time of `pid`, or `None` when no such process exists. Used with the
+/// pid to recognize a recorded child and to rule out pid reuse.
+#[cfg(target_os = "macos")]
+fn process_start_time(pid: u32) -> Result<Option<u64>, String> {
+    let pid =
+        i32::try_from(pid).map_err(|_| "Recorded 7-Zip process id is invalid.".to_string())?;
+    // SAFETY: proc_bsdinfo is plain old data, so the all-zero value is valid.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    // SAFETY: the kernel fills `info` only for the process named by `pid`, and
+    // the pointer and size describe `info` exactly.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size as libc::c_int,
+        )
+    };
+    if written <= 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(None);
+        }
+        return Err(format!(
+            "Could not read the 7-Zip process start time: {error}"
+        ));
+    }
+    Ok(Some(
+        info.pbi_start_tvsec
+            .wrapping_mul(1_000_000)
+            .wrapping_add(info.pbi_start_tvusec),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn process_start_time(pid: u32) -> Result<Option<u64>, String> {
+    let path = format!("/proc/{pid}/stat");
+    let stat = match std::fs::read_to_string(&path) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not read {path}: {error}")),
+    };
+    // The command name is parenthesized and may contain spaces or ')'. Fields
+    // after the last ')' start at state (field 3), so starttime (field 22) is
+    // the twentieth token there.
+    let (_, after_command) = stat
+        .rsplit_once(')')
+        .ok_or_else(|| format!("Could not parse {path}."))?;
+    after_command
+        .split_whitespace()
+        .nth(19)
+        .and_then(|token| token.parse::<u64>().ok())
+        .map(Some)
+        .ok_or_else(|| format!("Could not parse the start time in {path}."))
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn process_start_time(_pid: u32) -> Result<Option<u64>, String> {
+    Err("Stopping an interrupted 7-Zip process is not supported on this platform.".to_string())
+}
+
+/// Stop a 7-Zip child recorded by a previous run that exited without cleanup.
+/// It is signaled only while the recorded start time still matches, so a reused
+/// pid is left alone. Returns once the process is gone.
+#[cfg(unix)]
+pub(crate) fn terminate_recorded_child(record: &ChildProcessRecord) -> Result<(), String> {
+    if process_start_time(record.pid)? != Some(record.start_time) {
+        return Ok(());
+    }
+    let pid = libc::pid_t::try_from(record.pid)
+        .map_err(|_| "Recorded 7-Zip process id is invalid.".to_string())?;
+    // SAFETY: kill sends one signal to a pid. The start-time check above limits
+    // it to the process Zinnia recorded, and ESRCH means it already exited.
+    if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(format!(
+                "Could not stop the interrupted 7-Zip process {}: {error}",
+                record.pid
+            ));
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while process_start_time(record.pid)? == Some(record.start_time) {
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "The interrupted 7-Zip process {} did not exit after it was stopped.",
+                record.pid
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Ok(())
 }
 pub(crate) fn sync_directory(path: &std::path::Path) -> Result<(), String> {
     crate::fs_secure::sync_directory(path)

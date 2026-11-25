@@ -17,12 +17,24 @@
     <link rel="stylesheet" href="/main.css" />
   </head>
   <body>
+    <script>
+      (function () {
+        const ua = navigator.userAgent;
+        const platform = /Macintosh|Mac OS X/.test(ua)
+          ? "macos"
+          : /Windows/.test(ua)
+            ? "windows"
+            : "linux";
+        document.body.classList.add("platform-" + platform);
+      })();
+    </script>
     <a href="#main-content" class="skip-link">Skip to main content</a>
     <h1 class="visually-hidden">Zinnia</h1>
     <div
       id="startup-recovery-banner"
       class="startup-recovery-banner"
       role="alert"
+      data-tauri-drag-region="deep"
       hidden
     >
       <span id="startup-recovery-banner-text"></span>

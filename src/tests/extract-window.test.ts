@@ -256,6 +256,7 @@ describe("extract-window", () => {
     expect(invokeMock).toHaveBeenCalledWith("set_workspace_window_fx", {
       enabled: true,
       dark: true,
+      followSystem: true,
     });
   });
 

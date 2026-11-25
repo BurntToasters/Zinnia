@@ -6,7 +6,7 @@ use super::super::journal::{
     FileIdentity, MoveRecord, ObjectFingerprint,
 };
 use super::super::quota::{MAX_EXTRACT_ENTRIES, MAX_EXTRACT_PATH_BYTES};
-use super::{auto_rename_path, sync_file_best_effort};
+use super::{auto_rename_path, is_apple_double_sidecar_name, sync_file_best_effort};
 
 pub(crate) const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
 
@@ -98,28 +98,34 @@ fn validate_staged_tree_impl(
         directories.push(directory.clone());
         for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            entries = entries.saturating_add(1);
-            if entries > MAX_EXTRACT_ENTRIES {
-                return Err(format!(
-                    "Archive exceeds the {MAX_EXTRACT_ENTRIES}-entry safety limit."
-                ));
-            }
             let path = entry.path();
-            path_bytes = path_bytes.saturating_add(
-                path.strip_prefix(root)
-                    .unwrap_or(&path)
-                    .as_os_str()
-                    .as_encoded_bytes()
-                    .len() as u64,
-            );
-            if path_bytes > MAX_EXTRACT_PATH_BYTES {
-                return Err(format!(
-                    "Archive exceeds the {} MiB aggregate path-name safety limit.",
-                    MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
-                ));
-            }
             assert_path_under_root(root, &path)?;
             let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            // Sidecars are fingerprinted and link-checked like any entry (the
+            // journal's directory fingerprint hashes them), but they do not
+            // count toward the content limits.
+            let sidecar = meta.is_file() && is_apple_double_sidecar_name(&entry.file_name());
+            if !sidecar {
+                entries = entries.saturating_add(1);
+                if entries > MAX_EXTRACT_ENTRIES {
+                    return Err(format!(
+                        "Archive exceeds the {MAX_EXTRACT_ENTRIES}-entry safety limit."
+                    ));
+                }
+                path_bytes = path_bytes.saturating_add(
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .as_os_str()
+                        .as_encoded_bytes()
+                        .len() as u64,
+                );
+                if path_bytes > MAX_EXTRACT_PATH_BYTES {
+                    return Err(format!(
+                        "Archive exceeds the {} MiB aggregate path-name safety limit.",
+                        MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
+                    ));
+                }
+            }
             if meta.file_type().is_symlink() {
                 crate::path_safety::assert_relative_symlink_within_root(root, &path)?;
                 if fingerprint_contents {
@@ -166,12 +172,14 @@ fn validate_staged_tree_impl(
                 }
                 pending.push(path);
             } else if meta.is_file() {
-                bytes = bytes.saturating_add(meta.len());
-                if bytes > max_bytes {
-                    return Err(format!(
-                        "Archive exceeds its {:.1} GiB expanded-size safety limit.",
-                        max_bytes as f64 / 1_073_741_824.0
-                    ));
+                if !sidecar {
+                    bytes = bytes.saturating_add(meta.len());
+                    if bytes > max_bytes {
+                        return Err(format!(
+                            "Archive exceeds its {:.1} GiB expanded-size safety limit.",
+                            max_bytes as f64 / 1_073_741_824.0
+                        ));
+                    }
                 }
                 if sync_contents {
                     regular_files.push(path.clone());
@@ -461,6 +469,11 @@ pub(crate) fn plan_staged_contents(
         let entry = entry.map_err(|e| e.to_string())?;
         let source = entry.path();
         let meta = std::fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
+        // The filesystem recreates a sidecar when its owner is published.
+        // Planning it would make the owner's publish collide with it.
+        if meta.is_file() && is_apple_double_sidecar_name(&entry.file_name()) {
+            continue;
+        }
         let requested_target = destination.join(entry.file_name());
         if meta.is_dir() {
             match std::fs::symlink_metadata(&requested_target) {

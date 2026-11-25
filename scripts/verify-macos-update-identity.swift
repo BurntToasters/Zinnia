@@ -53,9 +53,9 @@ let scriptInode = try inode()
 precondition(scriptInode == before, "AppleScript changed app identity")
 let scriptVersion = try String(contentsOf: app.appendingPathComponent("Contents/version"), encoding: .utf8)
 precondition(scriptVersion == "script-new", "AppleScript did not install update")
-// Inject a move failure after backup; execute rollback through AppleScript too.
+// Inject a move failure while staging beside the live bundle; live Contents must stay intact.
 try fm.createDirectory(at: stage.appendingPathComponent("Contents"), withIntermediateDirectories: true)
-let failingScript = script.replacingOccurrences(of: #"/bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\""#, with: "/usr/bin/false")
+let failingScript = script.replacingOccurrences(of: #"/bin/mv -f \"$NEW/Contents\" \"$SRC/Contents.new\""#, with: "/usr/bin/false")
 precondition(failingScript != script, "Fault injection did not match")
 let failureStatus = try runScript(failingScript)
 precondition(failureStatus != 0, "Injected move unexpectedly succeeded")

@@ -13,9 +13,14 @@ use std::path::{Component, Path, PathBuf};
 /// Privileged replacement keeps the outer `.app` directory in place so Dock
 /// bookmarks do not follow the running app into the rollback directory.
 /// Both new and legacy backups store the original `Contents` under `$BAK`.
+/// The staged tree is moved to `$SRC/Contents.new` and exchanged with the live
+/// `Contents` by JXA `renamex_np(RENAME_SWAP)`, mirroring the unprivileged
+/// path. The old tree then moves into `$BAK/Contents`. Only when the exchange
+/// fails does the script fall back to the two-rename transaction.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || exit 1; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
+  -- Fallback below is two renames with no live Contents between them. A crash there leaves the app bundle without Contents, the same failure mode as before. It runs only when renamex_np is unavailable.
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; /bin/rm -rf \"$SRC/Contents.new\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents.new\" || { /bin/rm -rf \"$SRC/Contents.new\"; exit 1; }; if /usr/bin/osascript -l JavaScript -e 'ObjC.bindFunction(\"renamex_np\", [\"int\", [\"char *\", \"char *\", \"unsigned int\"]]); function run(argv) { if ($.renamex_np(argv[0], argv[1], 2) !== 0) { throw new Error(\"renamex_np failed\"); } }' \"$SRC/Contents\" \"$SRC/Contents.new\"; then /bin/mv -f \"$SRC/Contents.new\" \"$BAK/Contents\"; /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || { /bin/rm -rf \"$SRC/Contents.new\"; exit 1; }; if /bin/mv -f \"$SRC/Contents.new\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; /bin/rm -rf \"$SRC/Contents.new\"; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -39,19 +44,108 @@ pub const LINUX_PRIVILEGED_ENV_ALLOWLIST: &[&str] = &[
 
 /// Sibling backup directory next to the live `.app` (same volume, not `/tmp`).
 pub fn macos_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
+    let parent = extract_path.parent()?;
+    let name = extract_path.file_name()?;
+    Some(parent.join(format!(".zinnia-update-backup-{}", name.to_string_lossy())))
+}
+
+pub fn macos_legacy_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
     extract_path
         .parent()
         .map(|parent| parent.join(".zinnia-update-backup"))
 }
 
+pub struct MacosBackupRecovery {
+    pub install_backup: PathBuf,
+    pub restore_denied: Option<std::io::Error>,
+}
+
+pub fn recover_macos_app_backups(
+    live: &Path,
+    scoped: &Path,
+    legacy: &Path,
+) -> std::io::Result<MacosBackupRecovery> {
+    if macos_app_bundle_complete(live) {
+        if scoped.exists() {
+            let _ = std::fs::remove_dir_all(scoped);
+        }
+    } else {
+        let source = if macos_app_bundle_complete(scoped) {
+            Some(scoped)
+        } else if macos_app_bundle_complete(legacy) {
+            Some(legacy)
+        } else {
+            None
+        };
+        if let Some(source) = source {
+            return match restore_macos_contents(source, live) {
+                Ok(()) => Ok(MacosBackupRecovery {
+                    install_backup: scoped.to_path_buf(),
+                    restore_denied: None,
+                }),
+                Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                    Ok(MacosBackupRecovery {
+                        install_backup: source.to_path_buf(),
+                        restore_denied: Some(err),
+                    })
+                }
+                Err(err) => Err(err),
+            };
+        }
+    }
+    Ok(MacosBackupRecovery {
+        install_backup: scoped.to_path_buf(),
+        restore_denied: None,
+    })
+}
+
+fn restore_macos_contents(source: &Path, live: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(live)?;
+    let contents = live.join("Contents");
+    if contents.exists() {
+        std::fs::remove_file(&contents)?;
+    }
+    std::fs::rename(source.join("Contents"), &contents)?;
+    std::fs::remove_dir_all(source)
+}
+
 /// Replace only `Contents`; the installed `.app` inode is the Dock identity.
 /// The caller recovers/removes any previous sibling backup before entering.
-/// An atomic exchange is tried first; the backup transaction is the fallback.
+///
+/// The staged tree is first moved beside the live bundle as `Contents.new`.
+/// Then `renamex_np` with `RENAME_SWAP` exchanges the two directories in one
+/// step, so a crash can never leave the live bundle without `Contents`. The
+/// previous `Contents` ends up at `Contents.new` and is moved into the sibling
+/// backup afterwards, keeping the existing recovery path usable. When the
+/// exchange is unavailable, the two-rename backup transaction runs instead.
 pub fn install_macos_app_contents(stage: &Path, app: &Path, backup: &Path) -> std::io::Result<()> {
     if let Some(result) = swap_app_contents_when_possible(stage, app, backup, exchange_contents) {
         return result;
     }
     install_macos_app_contents_with(stage, app, backup, move_dir_replacing)
+}
+
+/// Sibling staging name used by the exchange transaction.
+fn contents_new_path(app: &Path) -> PathBuf {
+    app.join("Contents.new")
+}
+
+/// Removes a leftover `Contents.new` from an interrupted exchange. The live
+/// bundle must already be complete, so this copy is never the only recoverable
+/// one. Never follows a symlink at the staging name.
+fn remove_leftover_contents_new(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Moves the staged tree back when the exchange cannot proceed, so the caller's
+/// fallback transaction or the privileged script still finds `stage/Contents`.
+fn restore_staged_contents(stage: &Path, contents_new: &Path) -> std::io::Result<()> {
+    move_dir_replacing(contents_new, &stage.join("Contents"))
 }
 
 /// Exchanges the staged and live `Contents` in one step, so the live bundle is
@@ -62,14 +156,86 @@ fn swap_app_contents_when_possible(
     backup: &Path,
     exchange: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
 ) -> Option<std::io::Result<()>> {
-    if !macos_app_bundle_complete(stage) || !backup_slot_is_free(backup) {
+    if !macos_app_bundle_complete(stage)
+        || !macos_app_bundle_complete(app)
+        || !backup_slot_is_free(backup)
+    {
         return None;
     }
-    match exchange(&stage.join("Contents"), &app.join("Contents")) {
-        Ok(()) => Some(Ok(())),
+    let live = app.join("Contents");
+    let contents_new = contents_new_path(app);
+
+    if let Err(err) = remove_leftover_contents_new(&contents_new) {
+        return Some(Err(err));
+    }
+    if let Err(err) = move_dir_replacing(&stage.join("Contents"), &contents_new) {
+        let _ = remove_leftover_contents_new(&contents_new);
         // Admin-owned bundles must reach the privileged path, not the fallback.
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => Some(Err(err)),
-        Err(_) => None,
+        return if err.kind() == std::io::ErrorKind::PermissionDenied {
+            Some(Err(err))
+        } else {
+            None
+        };
+    }
+
+    // Refuse an existing backup before touching the live tree. `create_dir`
+    // never overwrites the only recoverable copy.
+    if let Err(err) = std::fs::create_dir(backup) {
+        return match restore_staged_contents(stage, &contents_new) {
+            Ok(()) => Some(Err(err)),
+            Err(restore_error) => Some(Err(std::io::Error::other(format!(
+                "{err}; could not restore staged Contents: {restore_error}"
+            )))),
+        };
+    }
+
+    match exchange(&live, &contents_new) {
+        Ok(()) => {
+            archive_swapped_contents(&contents_new, backup);
+            Some(Ok(()))
+        }
+        // Admin-owned bundles must reach the privileged path, not the fallback.
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            let _ = std::fs::remove_dir(backup);
+            match restore_staged_contents(stage, &contents_new) {
+                Ok(()) => Some(Err(err)),
+                Err(restore_error) => Some(Err(std::io::Error::other(format!(
+                    "{err}; could not restore staged Contents: {restore_error}"
+                )))),
+            }
+        }
+        // RENAME_SWAP reports ENOTSUP/EINVAL on filesystems without atomic
+        // directory exchange. Fall back to the two-rename backup transaction.
+        Err(_) => {
+            let _ = std::fs::remove_dir(backup);
+            match restore_staged_contents(stage, &contents_new) {
+                Ok(()) => None,
+                Err(restore_error) => Some(Err(std::io::Error::other(format!(
+                    "atomic Contents exchange is unavailable and the staged tree could not be restored: {restore_error}"
+                )))),
+            }
+        }
+    }
+}
+
+/// After a successful exchange, the old live `Contents` sits at
+/// `app/Contents.new`. Move it into the adjacent backup, then drop the backup
+/// because the new bundle is already live.
+fn archive_swapped_contents(contents_new: &Path, backup: &Path) {
+    // The exchange committed the update. A failure here must not report the
+    // install as failed; keep the previous tree beside the live bundle.
+    let archived = std::fs::rename(contents_new, backup.join("Contents"));
+    if archived.is_ok() {
+        let _ = std::fs::remove_dir_all(backup);
+    } else {
+        let _ = std::fs::remove_dir(backup);
+    }
+    if let Err(err) = archived {
+        eprintln!(
+            "The new app is installed, but the previous Contents could not be moved into {}: {err}; it remains at {}",
+            backup.display(),
+            contents_new.display()
+        );
     }
 }
 
@@ -123,6 +289,47 @@ pub fn macos_plist_short_version(xml: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+pub fn macos_plist_build_version(xml: &str) -> Option<String> {
+    const KEY: &str = "<key>CFBundleVersion</key>";
+    let rest = xml.split_once(KEY)?.1.trim_start();
+    let value = rest
+        .strip_prefix("<string>")?
+        .split_once("</string>")?
+        .0
+        .trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn build_components(value: &str) -> Option<Vec<u64>> {
+    value
+        .split('.')
+        .map(|part| {
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            part.parse().ok()
+        })
+        .collect()
+}
+
+pub fn dotted_build_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let (a, b) = (build_components(a)?, build_components(b)?);
+    let len = a.len().max(b.len());
+    let pad = |mut parts: Vec<u64>| {
+        parts.resize(len, 0);
+        parts
+    };
+    Some(pad(a).cmp(&pad(b)))
+}
+
+pub fn payload_build_is_newer(
+    payload_build: Option<&str>,
+    installed_build: Option<&str>,
+) -> Option<bool> {
+    let ordering = dotted_build_cmp(payload_build?, installed_build?)?;
+    Some(ordering == std::cmp::Ordering::Greater)
+}
+
 /// True when pkexec exited because the user dismissed its prompt (exit 126).
 pub fn pkexec_authorization_cancelled(exit_code: Option<i32>) -> bool {
     exit_code == Some(126)
@@ -134,6 +341,9 @@ pub fn restore_error_needs_admin(error: Option<&std::io::Error>) -> bool {
     error.is_some_and(|err| err.kind() == std::io::ErrorKind::PermissionDenied)
 }
 
+/// Fallback two-rename transaction for filesystems where `RENAME_SWAP` is
+/// unavailable. It keeps the previous `Contents` in the backup until the new
+/// tree is verified, then restores it after an injected or real move failure.
 fn install_macos_app_contents_with(
     stage: &Path,
     app: &Path,
@@ -200,37 +410,88 @@ pub fn is_cross_device(err: &std::io::Error) -> bool {
     }
 }
 
-/// Error returned when no AppImage temp directory could be selected.
-#[derive(Debug)]
-pub(crate) enum SameDeviceTempDirError<E> {
-    /// Every candidate failed, so retain the last useful creation or metadata error.
-    Candidate(E),
-    /// No candidate was created on the same device as the live AppImage.
-    NoSameDeviceCandidate,
+/// Owns the staged temp path and removes it unless it was renamed into place.
+struct StagedTempFile {
+    path: PathBuf,
+    persisted: bool,
 }
 
-/// Return the first successfully created candidate on `extract_device`.
-/// Failed candidates and candidates on another device are skipped. A temp
-/// directory carried by a cross-device candidate is dropped before continuing.
-pub(crate) fn select_same_device_temp_dir<T, E>(
-    extract_device: u64,
-    candidates: impl IntoIterator<Item = Option<PathBuf>>,
-    mut attempt: impl FnMut(&Path) -> Result<(T, u64), E>,
-) -> Result<T, SameDeviceTempDirError<E>> {
-    let mut last_candidate_error = None;
-
-    for candidate in candidates.into_iter().flatten() {
-        match attempt(&candidate) {
-            Ok((temp_dir, device)) if device == extract_device => return Ok(temp_dir),
-            Ok((_temp_dir, _device)) => {}
-            Err(error) => last_candidate_error = Some(error),
+impl Drop for StagedTempFile {
+    fn drop(&mut self) {
+        if !self.persisted {
+            let _ = std::fs::remove_file(&self.path);
         }
     }
+}
 
-    match last_candidate_error {
-        Some(error) => Err(SameDeviceTempDirError::Candidate(error)),
-        None => Err(SameDeviceTempDirError::NoSameDeviceCandidate),
+/// Creates a new `0600` file in `parent` with a unique name. `create_new`
+/// never follows or reuses an existing entry, so a collision only retries.
+fn create_staged_file(parent: &Path) -> std::io::Result<(std::fs::File, StagedTempFile)> {
+    static NEXT_STAGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    const ATTEMPTS: usize = 16;
+    for _ in 0..ATTEMPTS {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let counter = NEXT_STAGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = parent.join(format!(
+            ".zinnia-staged-{}-{}-{}",
+            std::process::id(),
+            nanos,
+            counter
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => {
+                let staged = StagedTempFile {
+                    path,
+                    persisted: false,
+                };
+                return Ok((file, staged));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
     }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique staged file",
+    ))
+}
+
+pub(crate) fn replace_file_atomically<F>(dest: &Path, write: F) -> std::io::Result<()>
+where
+    F: FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+{
+    let parent = match dest.parent() {
+        Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+        Some(parent) => parent,
+        None => return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)),
+    };
+    if !parent.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "destination directory does not exist",
+        ));
+    }
+    let (mut staged_file, mut staged) = create_staged_file(parent)?;
+    write(&mut staged_file)?;
+    staged_file.sync_all()?;
+    match std::fs::metadata(dest) {
+        Ok(metadata) => staged_file.set_permissions(metadata.permissions())?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    std::fs::rename(&staged.path, dest)?;
+    staged.persisted = true;
+    Ok(())
 }
 
 /// Skip the archive's first path component (Tauri `.app.tar.gz` wrapper), then
@@ -505,6 +766,7 @@ pub fn move_dir_replacing(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
     use std::path::Path;
 
     #[test]
@@ -520,20 +782,25 @@ mod tests {
                 .contains("/bin/rm -rf \\\"$SRC/Contents\\\"; fi; /bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""),
             "failed swap must remove the incomplete new tree before restoring the backup"
         );
-        let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\"")
-            .expect("live Contents must be renamed to the sibling backup first");
+        let staged_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$NEW/Contents\\\" \\\"$SRC/Contents.new\\\"")
+            .expect("staged Contents must move beside the live bundle first");
         let stale_backup_rm = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find(concat!(
-                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; /bin/mkdir \\\"$BAK\\\" || exit 1; ",
-                "/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\""
-            ))
-            .expect(
-                "stale backup may be removed only after live Contents exists and immediately before the swap",
-            );
+            .find("if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; /bin/mkdir \\\"$BAK\\\" || exit 1;")
+            .expect("stale backup must be cleared before the exchange");
+        let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("-l JavaScript")
+            .expect("live Contents must be exchanged with renamex_np first");
+        let fallback_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\" ||")
+            .expect("two-rename fallback must remain for unsupported filesystems");
         assert!(
-            stale_backup_rm < swap_at,
-            "must not delete the sibling backup before the live bundle is moved"
+            stale_backup_rm < swap_at && staged_at < swap_at,
+            "must not delete the sibling backup or exchange before the staged tree is in place"
+        );
+        assert!(
+            swap_at < fallback_at,
+            "the atomic exchange must be attempted before the two-rename fallback"
         );
         assert!(
             !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("rm -rf \" & quoted form of srcPath"),
@@ -553,8 +820,240 @@ mod tests {
         let app = Path::new("/Applications/Zinnia.app");
         assert_eq!(
             macos_update_backup_path(app).as_deref(),
+            Some(Path::new("/Applications/.zinnia-update-backup-Zinnia.app"))
+        );
+        assert_eq!(
+            macos_legacy_update_backup_path(app).as_deref(),
             Some(Path::new("/Applications/.zinnia-update-backup"))
         );
+    }
+
+    #[test]
+    fn backup_path_is_distinct_per_bundle_under_one_parent() {
+        let a = macos_update_backup_path(Path::new("/Applications/A.app"));
+        let b = macos_update_backup_path(Path::new("/Applications/B.app"));
+        assert_ne!(a, b);
+        assert_eq!(macos_update_backup_path(Path::new("/")), None);
+    }
+
+    fn write_bundle(bundle: &Path, value: &str) {
+        std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+        std::fs::write(bundle.join("Contents/version"), value).unwrap();
+    }
+
+    fn bundle_value(bundle: &Path) -> Option<String> {
+        std::fs::read_to_string(bundle.join("Contents/version")).ok()
+    }
+
+    #[test]
+    fn scoped_cleanup_removes_only_healthy_bundles_own_backup() {
+        let dir = ScratchDir::new("backup-scoped-cleanup");
+        let app_a = dir.0.join("A.app");
+        let app_b = dir.0.join("B.app");
+        write_bundle(&app_a, "a-live");
+        write_bundle(&app_b, "b-live");
+        let scoped_a = macos_update_backup_path(&app_a).unwrap();
+        let scoped_b = macos_update_backup_path(&app_b).unwrap();
+        let legacy = macos_legacy_update_backup_path(&app_a).unwrap();
+        write_bundle(&scoped_a, "a-old");
+        write_bundle(&scoped_b, "b-old");
+        write_bundle(&legacy, "legacy");
+
+        let recovery = recover_macos_app_backups(&app_a, &scoped_a, &legacy).unwrap();
+
+        assert!(recovery.restore_denied.is_none());
+        assert_eq!(recovery.install_backup, scoped_a);
+        assert!(!scoped_a.exists());
+        assert_eq!(bundle_value(&scoped_b).as_deref(), Some("b-old"));
+        assert_eq!(bundle_value(&legacy).as_deref(), Some("legacy"));
+        assert_eq!(bundle_value(&app_a).as_deref(), Some("a-live"));
+    }
+
+    #[test]
+    fn incomplete_bundle_restores_from_its_own_scoped_backup() {
+        let dir = ScratchDir::new("backup-restore-scoped");
+        let app_a = dir.0.join("A.app");
+        let app_b = dir.0.join("B.app");
+        std::fs::create_dir_all(&app_a).unwrap();
+        write_bundle(&app_b, "b-live");
+        let scoped_a = macos_update_backup_path(&app_a).unwrap();
+        let scoped_b = macos_update_backup_path(&app_b).unwrap();
+        let legacy = macos_legacy_update_backup_path(&app_a).unwrap();
+        write_bundle(&scoped_a, "a-recovery");
+        write_bundle(&scoped_b, "b-recovery");
+        write_bundle(&legacy, "legacy");
+
+        let recovery = recover_macos_app_backups(&app_a, &scoped_a, &legacy).unwrap();
+
+        assert!(recovery.restore_denied.is_none());
+        assert_eq!(recovery.install_backup, scoped_a);
+        assert_eq!(bundle_value(&app_a).as_deref(), Some("a-recovery"));
+        assert!(!scoped_a.exists());
+        assert_eq!(bundle_value(&scoped_b).as_deref(), Some("b-recovery"));
+        assert_eq!(bundle_value(&legacy).as_deref(), Some("legacy"));
+    }
+
+    #[test]
+    fn incomplete_bundle_restores_from_legacy_when_no_scoped_backup() {
+        let dir = ScratchDir::new("backup-restore-legacy");
+        let app_a = dir.0.join("A.app");
+        let app_b = dir.0.join("B.app");
+        std::fs::create_dir_all(&app_a).unwrap();
+        write_bundle(&app_b, "b-live");
+        let scoped_b = macos_update_backup_path(&app_b).unwrap();
+        let scoped_a = macos_update_backup_path(&app_a).unwrap();
+        let legacy = macos_legacy_update_backup_path(&app_a).unwrap();
+        write_bundle(&scoped_b, "b-recovery");
+        write_bundle(&legacy, "legacy-recovery");
+
+        let recovery = recover_macos_app_backups(&app_a, &scoped_a, &legacy).unwrap();
+
+        assert!(recovery.restore_denied.is_none());
+        assert_eq!(recovery.install_backup, scoped_a);
+        assert_eq!(bundle_value(&app_a).as_deref(), Some("legacy-recovery"));
+        assert!(!legacy.exists());
+        assert_eq!(bundle_value(&scoped_b).as_deref(), Some("b-recovery"));
+    }
+
+    #[test]
+    fn healthy_bundle_keeps_legacy_backup() {
+        let dir = ScratchDir::new("backup-healthy-legacy");
+        let app_a = dir.0.join("A.app");
+        write_bundle(&app_a, "a-live");
+        let scoped_a = macos_update_backup_path(&app_a).unwrap();
+        let legacy = macos_legacy_update_backup_path(&app_a).unwrap();
+        write_bundle(&legacy, "legacy");
+
+        let recovery = recover_macos_app_backups(&app_a, &scoped_a, &legacy).unwrap();
+
+        assert!(recovery.restore_denied.is_none());
+        assert_eq!(bundle_value(&legacy).as_deref(), Some("legacy"));
+        assert_eq!(bundle_value(&app_a).as_deref(), Some("a-live"));
+    }
+
+    #[test]
+    fn incomplete_bundle_without_any_complete_backup_is_left_alone() {
+        let dir = ScratchDir::new("backup-nothing-to-restore");
+        let app_a = dir.0.join("A.app");
+        std::fs::create_dir_all(&app_a).unwrap();
+        let scoped_a = macos_update_backup_path(&app_a).unwrap();
+        let legacy = macos_legacy_update_backup_path(&app_a).unwrap();
+        std::fs::create_dir_all(&scoped_a).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+
+        let recovery = recover_macos_app_backups(&app_a, &scoped_a, &legacy).unwrap();
+
+        assert!(recovery.restore_denied.is_none());
+        assert_eq!(recovery.install_backup, scoped_a);
+        assert!(scoped_a.is_dir());
+        assert!(legacy.is_dir());
+        assert!(!app_a.join("Contents").exists());
+    }
+
+    #[test]
+    fn build_version_reader_parses_cfbundleversion_beside_short_version() {
+        let xml = "<?xml version=\"1.0\"?>\n<plist version=\"1.0\"><dict>\n\t<key>CFBundleShortVersionString</key>\n\t<string>0.7.0</string>\n\t<key>CFBundleVersion</key>\n\t<string>0.7.3002</string>\n</dict></plist>";
+        assert_eq!(macos_plist_build_version(xml).as_deref(), Some("0.7.3002"));
+        assert_eq!(macos_plist_short_version(xml).as_deref(), Some("0.7.0"));
+    }
+
+    #[test]
+    fn build_version_reader_missing_or_non_string_is_none() {
+        let only_short = "<plist><dict><key>CFBundleShortVersionString</key><string>0.7.0</string></dict></plist>";
+        assert_eq!(macos_plist_build_version(only_short), None);
+        let integer = "<key>CFBundleVersion</key><integer>3002</integer>";
+        assert_eq!(macos_plist_build_version(integer), None);
+        let blank = "<key>CFBundleVersion</key><string>  </string>";
+        assert_eq!(macos_plist_build_version(blank), None);
+    }
+
+    #[test]
+    fn build_version_reader_ignores_binary_and_garbage() {
+        assert_eq!(
+            macos_plist_build_version("bplist00\u{0}\u{1}\u{ff}CFBundleVersion"),
+            None
+        );
+        assert_eq!(macos_plist_build_version("\u{0}\u{ff}not xml"), None);
+        assert_eq!(macos_plist_build_version(""), None);
+    }
+
+    #[test]
+    fn build_is_newer_accepts_later_beta_in_same_series() {
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.3003"), Some("0.7.3002")),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn build_is_newer_refuses_older_beta_in_same_series() {
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.3002"), Some("0.7.3003")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn build_is_newer_refuses_equal_build() {
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.3003"), Some("0.7.3003")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn build_is_newer_orders_stable_after_betas_of_same_patch() {
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.9999"), Some("0.7.3003")),
+            Some(true)
+        );
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.3003"), Some("0.7.9999")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn build_is_newer_orders_next_patch_after_stable_numerically() {
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.13001"), Some("0.7.9999")),
+            Some(true)
+        );
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.9999"), Some("0.7.13001")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn build_is_newer_missing_or_unparsable_is_none() {
+        assert_eq!(payload_build_is_newer(None, Some("0.7.3002")), None);
+        assert_eq!(payload_build_is_newer(Some("0.7.3002"), None), None);
+        assert_eq!(payload_build_is_newer(None, None), None);
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.x"), Some("0.7.3002")),
+            None
+        );
+        assert_eq!(payload_build_is_newer(Some("0.7.3002"), Some("")), None);
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.3002."), Some("0.7.3002")),
+            None
+        );
+        assert_eq!(payload_build_is_newer(Some("0..7"), Some("0.7.3002")), None);
+        assert_eq!(payload_build_is_newer(Some("+0.7"), Some("0.7.3002")), None);
+        assert_eq!(
+            payload_build_is_newer(Some("0.7.99999999999999999999999"), Some("0.7.3002")),
+            None
+        );
+    }
+
+    #[test]
+    fn dotted_build_cmp_treats_missing_components_as_zero() {
+        use std::cmp::Ordering;
+        assert_eq!(dotted_build_cmp("0.7", "0.7.0"), Some(Ordering::Equal));
+        assert_eq!(dotted_build_cmp("0.7.1", "0.7"), Some(Ordering::Greater));
+        assert_eq!(dotted_build_cmp("1", "0.9.9"), Some(Ordering::Greater));
+        assert_eq!(dotted_build_cmp("0.7.10", "0.7.9"), Some(Ordering::Greater));
     }
 
     #[cfg(unix)]
@@ -715,13 +1214,23 @@ mod tests {
 
     #[test]
     fn script_touches_bundle_before_success_exit() {
-        let moved = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$NEW/Contents\\\" \\\"$SRC/Contents\\\"")
-            .expect("new Contents must be moved into the app");
+        let swapped = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("-l JavaScript")
+            .expect("new Contents must be exchanged into the app");
         let touch = MACOS_PRIVILEGED_INSTALL_SCRIPT
             .find("/usr/bin/touch \\\"$SRC\\\"; exit 0")
             .expect("bundle must be touched right before the success exit");
-        assert!(moved < touch, "touch must run after the successful move");
+        assert!(swapped < touch, "touch must run after the successful swap");
+        let fallback_moved = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$SRC/Contents.new\\\" \\\"$SRC/Contents\\\"")
+            .expect("fallback must move new Contents into the app");
+        let fallback_touch = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .rfind("/usr/bin/touch \\\"$SRC\\\"; exit 0")
+            .expect("fallback must touch the bundle before its success exit");
+        assert!(
+            fallback_moved < fallback_touch,
+            "fallback touch must run after its successful move"
+        );
     }
 
     #[test]
@@ -807,7 +1316,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_swap_keeps_outer_app_and_leaves_old_contents_in_stage() {
+    fn macos_swap_keeps_outer_app_and_archives_old_contents() {
         use std::os::unix::fs::MetadataExt;
         let (root, app, stage, backup) = macos_fixture();
         let inode = std::fs::metadata(&app).unwrap().ino();
@@ -817,11 +1326,10 @@ mod tests {
             std::fs::read_to_string(app.join("Contents/version")).unwrap(),
             "new"
         );
-        // An exchange leaves the old tree in the stage dir; a rename would not.
-        assert_eq!(
-            std::fs::read_to_string(stage.join("Contents/version")).unwrap(),
-            "old"
-        );
+        // The staged tree moves to Contents.new before the exchange, and the
+        // old tree is archived only long enough to complete the transaction.
+        assert!(!stage.join("Contents").exists());
+        assert!(!app.join("Contents.new").exists());
         assert!(!backup.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -890,7 +1398,7 @@ mod tests {
         {
             let resolved = resolve_trusted_system_helper("sh").expect("sh should exist");
             assert!(
-                resolved == PathBuf::from("/bin/sh") || resolved == PathBuf::from("/usr/bin/sh"),
+                resolved == Path::new("/bin/sh") || resolved == Path::new("/usr/bin/sh"),
                 "hostile PATH must not change trusted helper resolution, got {resolved:?}"
             );
         }
@@ -906,9 +1414,7 @@ mod tests {
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"WAYLAND_DISPLAY"));
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"DBUS_SESSION_BUS_ADDRESS"));
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"XDG_RUNTIME_DIR"));
-        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST
-            .iter()
-            .any(|key| *key == "PATH"));
+        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"PATH"));
     }
 
     #[cfg(unix)]
@@ -947,135 +1453,169 @@ mod tests {
         assert!(!unix_directory_entry_is_trusted_helper(0, 0o775, false));
     }
 
-    // AppImage temp-directory fallback failure cases, recorded before any
-    // production change:
-    // - a missing/unwritable first candidate must not prevent a later usable one;
-    // - a temp directory on another device and an unavailable cache location
-    //   must still allow a same-device app-directory sibling;
-    // - candidates on other devices must never be accepted;
-    // - if every candidate fails, selection must return a useful last error
-    //   without reaching the install callback or changing the live app.
+    struct ScratchDir(PathBuf);
 
-    #[test]
-    fn appimage_tempdir_falls_back_after_first_candidate_fails() {
-        let first = PathBuf::from("missing-temp-parent");
-        let second = PathBuf::from("usable-cache-parent");
-        let mut attempts = Vec::new();
-
-        let selected = select_same_device_temp_dir(
-            7,
-            [Some(first.clone()), Some(second.clone())],
-            |candidate| {
-                attempts.push(candidate.to_path_buf());
-                if candidate == first {
-                    Err("first candidate is unavailable")
-                } else {
-                    Ok((candidate.to_path_buf(), 7))
-                }
-            },
-        )
-        .expect("a failed first candidate must not block a suitable fallback");
-
-        assert_eq!(attempts, vec![first, second.clone()]);
-        assert_eq!(selected, second);
-    }
-
-    #[test]
-    fn appimage_tempdir_skips_cross_device_temp_and_missing_cache() {
-        let system_temp = PathBuf::from("system-temp");
-        let missing_cache = PathBuf::from("missing-cache-parent");
-        let app_sibling = PathBuf::from("app-sibling");
-        let mut attempts = Vec::new();
-
-        let selected = select_same_device_temp_dir(
-            1,
-            [
-                Some(system_temp.clone()),
-                Some(missing_cache.clone()),
-                Some(app_sibling.clone()),
-            ],
-            |candidate| {
-                attempts.push(candidate.to_path_buf());
-                if candidate == system_temp {
-                    Ok::<_, &str>((candidate.to_path_buf(), 2))
-                } else if candidate == missing_cache {
-                    Err("cache candidate path does not exist")
-                } else {
-                    Ok((candidate.to_path_buf(), 1))
-                }
-            },
-        )
-        .expect("a same-device app sibling must remain eligible after cache is unavailable");
-
-        assert_eq!(
-            attempts,
-            vec![system_temp, missing_cache, app_sibling.clone()]
-        );
-        assert_eq!(selected, app_sibling);
-    }
-
-    #[test]
-    fn appimage_tempdir_uses_last_useful_error_and_does_not_touch_live_app() {
-        let app =
-            std::env::temp_dir().join(format!("zinnia-appimage-fallback-{}", std::process::id()));
-        let _ = std::fs::remove_file(&app);
-        struct RemoveOnDrop(PathBuf);
-        impl Drop for RemoveOnDrop {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_file(&self.0);
-            }
+    impl ScratchDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("zinnia-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
         }
-        let _cleanup = RemoveOnDrop(app.clone());
-        std::fs::write(&app, b"original app").unwrap();
-        let first = PathBuf::from("system-temp");
-        let last = PathBuf::from("app-sibling");
-        let mut install_reached = false;
+    }
 
-        let result = select_same_device_temp_dir(
-            1,
-            [Some(first.clone()), None, Some(last.clone())],
-            |candidate| {
-                if candidate == first {
-                    Ok((candidate.to_path_buf(), 2))
-                } else {
-                    Err("app sibling is unavailable")
-                }
-            },
-        )
-        .map(|selected| {
-            install_reached = true;
-            let _ = selected;
-            std::fs::write(&app, b"updated app").unwrap();
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn sorted_entry_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    struct PartialThenFail {
+        sent: bool,
+    }
+
+    impl Read for PartialThenFail {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.sent {
+                return Err(std::io::Error::other("stream dropped mid-entry"));
+            }
+            self.sent = true;
+            let chunk = b"new";
+            let n = chunk.len().min(buf.len());
+            buf[..n].copy_from_slice(&chunk[..n]);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn replace_write_error_keeps_original_and_removes_staged_file() {
+        let dir = ScratchDir::new("replace-write-error");
+        let dest = dir.0.join("app.AppImage");
+        std::fs::write(&dest, b"original app").unwrap();
+
+        let result = replace_file_atomically(&dest, |file| {
+            file.write_all(b"partial")?;
+            Err(std::io::Error::other("write interrupted"))
         });
 
-        assert!(matches!(
-            result,
-            Err(SameDeviceTempDirError::Candidate(
-                "app sibling is unavailable"
-            ))
-        ));
-        assert!(
-            !install_reached,
-            "install work must wait for a suitable temp directory"
-        );
-        assert_eq!(std::fs::read(&app).unwrap(), b"original app");
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"original app");
+        assert_eq!(sorted_entry_names(&dir.0), vec!["app.AppImage"]);
     }
 
     #[test]
-    fn appimage_tempdir_rejects_all_cross_device_candidates() {
-        let selected = select_same_device_temp_dir(
-            1,
-            [
-                Some(PathBuf::from("system-temp")),
-                Some(PathBuf::from("app-sibling")),
-            ],
-            |candidate| Ok::<_, &str>((candidate.to_path_buf(), 2)),
-        );
+    fn replace_stream_error_mid_copy_keeps_original() {
+        let dir = ScratchDir::new("replace-stream-error");
+        let dest = dir.0.join("app.AppImage");
+        std::fs::write(&dest, b"original app").unwrap();
 
-        assert!(matches!(
-            selected,
-            Err(SameDeviceTempDirError::NoSameDeviceCandidate)
-        ));
+        let result = replace_file_atomically(&dest, |file| {
+            let mut stream = PartialThenFail { sent: false };
+            std::io::copy(&mut stream, file)?;
+            Ok(())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"original app");
+        assert_eq!(sorted_entry_names(&dir.0), vec!["app.AppImage"]);
+    }
+
+    #[test]
+    fn replace_success_writes_exact_bytes_and_leaves_no_staged_file() {
+        let dir = ScratchDir::new("replace-success");
+        let dest = dir.0.join("app.AppImage");
+        std::fs::write(&dest, b"original app with a longer tail").unwrap();
+
+        replace_file_atomically(&dest, |file| file.write_all(b"new app")).unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new app");
+        assert_eq!(sorted_entry_names(&dir.0), vec!["app.AppImage"]);
+    }
+
+    #[test]
+    fn replace_leaves_live_file_untouched_until_rename() {
+        let dir = ScratchDir::new("replace-untouched");
+        let dest = dir.0.join("app.AppImage");
+        std::fs::write(&dest, b"original app").unwrap();
+        let mut observed_during_write = None;
+
+        let result = replace_file_atomically(&dest, |file| {
+            file.write_all(b"partial")?;
+            observed_during_write = Some(std::fs::read(&dest)?);
+            file.write_all(b" new app")?;
+            Ok(())
+        });
+
+        result.unwrap();
+        assert_eq!(observed_during_write, Some(b"original app".to_vec()));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"partial new app");
+    }
+
+    #[test]
+    fn replace_missing_parent_errors_without_creating_anything() {
+        let dir = ScratchDir::new("replace-missing-parent");
+        let dest = dir.0.join("absent").join("app.AppImage");
+        let mut writer_called = false;
+
+        let result = replace_file_atomically(&dest, |file| {
+            writer_called = true;
+            file.write_all(b"new app")
+        });
+
+        assert!(result.is_err());
+        assert!(!writer_called);
+        assert!(!dir.0.join("absent").exists());
+        assert!(sorted_entry_names(&dir.0).is_empty());
+    }
+
+    #[test]
+    fn replace_creates_missing_destination() {
+        let dir = ScratchDir::new("replace-create");
+        let dest = dir.0.join("app.AppImage");
+
+        replace_file_atomically(&dest, |file| file.write_all(b"new app")).unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new app");
+        assert_eq!(sorted_entry_names(&dir.0), vec!["app.AppImage"]);
+    }
+
+    #[test]
+    fn replace_directory_destination_errors_and_leaves_no_staged_file() {
+        let dir = ScratchDir::new("replace-directory-dest");
+        let dest = dir.0.join("app.AppImage");
+        std::fs::create_dir(&dest).unwrap();
+
+        let result = replace_file_atomically(&dest, |file| file.write_all(b"new app"));
+
+        assert!(result.is_err());
+        assert!(dest.is_dir());
+        assert_eq!(sorted_entry_names(&dir.0), vec!["app.AppImage"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_keeps_original_unix_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = ScratchDir::new("replace-mode");
+        let dest = dir.0.join("app.AppImage");
+        std::fs::write(&dest, b"original app").unwrap();
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o754)).unwrap();
+
+        replace_file_atomically(&dest, |file| file.write_all(b"new app")).unwrap();
+
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o754);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new app");
     }
 
     #[cfg(unix)]
@@ -1084,7 +1624,7 @@ mod tests {
         let resolved =
             resolve_trusted_system_helper("sh").expect("sh should exist as a root helper");
         assert!(
-            resolved == PathBuf::from("/bin/sh") || resolved == PathBuf::from("/usr/bin/sh"),
+            resolved == Path::new("/bin/sh") || resolved == Path::new("/usr/bin/sh"),
             "unexpected sh path {resolved:?}"
         );
         assert!(unix_helper_is_trusted(&resolved));

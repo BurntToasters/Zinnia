@@ -80,7 +80,7 @@ function windowsAttributes(target) {
       "-Command",
       `[int](Get-Item -LiteralPath '${literal}' -Force).Attributes`,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", windowsHide: true },
   );
   assert.equal(
     result.status,
@@ -161,7 +161,7 @@ function memberReadableWith(archive, member, password) {
   const result = spawnSync(
     requireHostSidecar(),
     ["e", "-so", `-p${password}`, "--", archive, member],
-    { encoding: "utf8" },
+    { encoding: "utf8", windowsHide: true },
   );
   return result.status === 0;
 }

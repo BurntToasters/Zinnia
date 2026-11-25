@@ -2018,8 +2018,17 @@ test("an explicit ZINNIA_E2E_BACKGROUND value wins over CI and defaults", () => 
   );
 });
 
-test("Windows and Linux runs get no background mode by default", () => {
-  for (const platform of ["win32", "linux"]) {
-    assert.equal(e2eRunner.e2eBackgroundValue({ env: {}, platform }), null);
+test("local Windows runs use background mode unless foreground is requested", () => {
+  const platform = "win32";
+  assert.equal(e2eRunner.e2eBackgroundValue({ env: {}, platform }), "1");
+  for (const env of [{ CI: "true" }, { ZINNIA_E2E_FOREGROUND: "1" }]) {
+    assert.equal(e2eRunner.e2eBackgroundValue({ env, platform }), null);
   }
+});
+
+test("Linux keeps its existing display mode", () => {
+  assert.equal(
+    e2eRunner.e2eBackgroundValue({ env: {}, platform: "linux" }),
+    null,
+  );
 });

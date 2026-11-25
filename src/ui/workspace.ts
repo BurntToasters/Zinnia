@@ -144,6 +144,29 @@ export function getWorkspaceMode(): WorkspaceMode {
   return mode === "power" ? "power" : "basic";
 }
 
+const FULLSCREEN_EXIT_WAIT_MS = 1000;
+const FULLSCREEN_EXIT_DEFER_MS = 5000;
+const FULLSCREEN_EXIT_POLL_MS = 50;
+
+/**
+ * Waits, bounded by the timeout, for native fullscreen to end. macOS animates
+ * out of fullscreen, and resize or unmaximize requests sent during that
+ * animation are dropped.
+ */
+async function waitForFullscreenExit(
+  appWindow: ReturnType<typeof getCurrentWebviewWindow>,
+  timeoutMs = FULLSCREEN_EXIT_WAIT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await appWindow.isFullscreen())) return true;
+    await new Promise((resolve) =>
+      window.setTimeout(resolve, FULLSCREEN_EXIT_POLL_MS),
+    );
+  }
+  return !(await appWindow.isFullscreen());
+}
+
 export async function resizeWorkspaceWindow(
   mode: WorkspaceMode,
 ): Promise<void> {
@@ -169,6 +192,36 @@ export async function resizeWorkspaceWindow(
 
       try {
         if (!resizable) {
+          try {
+            if (
+              typeof appWindow.isFullscreen === "function" &&
+              typeof appWindow.setFullscreen === "function" &&
+              (await appWindow.isFullscreen())
+            ) {
+              await appWindow.setFullscreen(false);
+              let exited = await waitForFullscreenExit(appWindow);
+              if (!exited) {
+                // The native animation can outlast the short wait. Locking a
+                // still-fullscreen window leaves Basic at the wrong size and
+                // non-maximizable, so keep waiting before applying the lock.
+                exited = await waitForFullscreenExit(
+                  appWindow,
+                  FULLSCREEN_EXIT_DEFER_MS,
+                );
+              }
+              if (!exited) {
+                console.warn(
+                  "Basic window lock skipped: the window is still fullscreen.",
+                );
+                return;
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            devLog(
+              `Unable to leave fullscreen before locking basic window: ${msg}`,
+            );
+          }
           try {
             if (
               typeof appWindow.isMaximized === "function" &&

@@ -292,10 +292,33 @@ test("CI is limited to tests, audits, validation, and unsigned smoke builds", ()
     "utf8",
   );
   assert.doesNotMatch(workflow, /^\s*(?:-\s*)?(?:run:\s*)?npm run release:/m);
-  for (const line of workflow.split(/\r?\n/)) {
+  const unfolded = workflow.replace(/\\\r?\n\s*/g, " ");
+  for (const line of unfolded.split(/\r?\n/)) {
     if (line.includes("npx tauri build")) {
-      assert.match(line, /--no-bundle\s*$/);
+      const isNoBundle = /--no-bundle\s*$/.test(line);
+      const isUnsignedMacosSmoke =
+        /--target universal-apple-darwin\b/.test(line) &&
+        /--bundles app\b/.test(line) &&
+        !/\b(?:dmg|nsis|appimage|deb|rpm)\b/i.test(line) &&
+        /--config '\{"bundle":\{"createUpdaterArtifacts":false\}\}'/.test(line);
+      assert.ok(
+        isNoBundle || isUnsignedMacosSmoke,
+        `Unexpected tauri build command in CI: ${line.trim()}`,
+      );
     }
+  }
+  const macosSmokeJob = workflow.match(
+    /^  macos-universal-smoke:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$)/m,
+  )?.[0];
+  assert.ok(macosSmokeJob);
+  assert.match(macosSmokeJob, /node scripts\/zip-macos\.js --unsigned/);
+  for (const secret of [
+    "APPLE_SIGNING_IDENTITY",
+    "APPLE_CERTIFICATE",
+    "APPLE_ID",
+    "TAURI_SIGNING_PRIVATE_KEY",
+  ]) {
+    assert.doesNotMatch(macosSmokeJob, new RegExp(secret));
   }
 });
 

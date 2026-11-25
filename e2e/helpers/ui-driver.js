@@ -961,6 +961,55 @@ export async function waitForBasicBrowseStatusIdle(timeoutMsg) {
   return basicBrowseStatusState();
 }
 
+/**
+ * Click Basic browse contents and record loading from inside the page. A
+ * one-entry listing can start and finish between external WebDriver polls, so
+ * a MutationObserver armed before the click is the only reliable witness.
+ */
+export async function clickBasicBrowseContentsAndAwaitLoading() {
+  await browser.execute(() => {
+    const status = document.getElementById("basic-browse-status");
+    if (!status) throw new Error("missing #basic-browse-status");
+    const record = { sawLoading: false, idleAfterLoading: false };
+    window.__zinniaBasicBrowseLoading = record;
+    const loading = () =>
+      status.classList.contains("is-loading") ||
+      status.getAttribute("aria-busy") === "true";
+    const sample = () => {
+      if (loading()) record.sawLoading = true;
+      else if (record.sawLoading) record.idleAfterLoading = true;
+    };
+    window.__zinniaBasicBrowseObserver?.disconnect();
+    window.__zinniaBasicBrowseObserver = new MutationObserver(sample);
+    window.__zinniaBasicBrowseObserver.observe(status, {
+      attributes: true,
+      attributeFilter: ["class", "aria-busy"],
+    });
+    sample();
+    document.getElementById("basic-browse-contents")?.click();
+    sample();
+  });
+  try {
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const record = window.__zinniaBasicBrowseLoading;
+          return Boolean(record?.sawLoading && record.idleAfterLoading);
+        }),
+      {
+        timeout: 120_000,
+        timeoutMsg:
+          "Basic browse did not show loading then clear for a valid archive",
+      },
+    );
+  } finally {
+    await browser.execute(() => {
+      window.__zinniaBasicBrowseObserver?.disconnect();
+      delete window.__zinniaBasicBrowseObserver;
+    });
+  }
+}
+
 export async function powerExtractPasswordToggleState() {
   return browser.execute(() => {
     const input = document.getElementById("extract-password");

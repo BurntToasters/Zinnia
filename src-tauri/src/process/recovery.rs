@@ -1,16 +1,22 @@
 //! Startup recovery for interrupted archive transactions.
 
+use tauri::Manager;
+
 use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
 use super::journal::{
     cleanup_journal_path, clear_acknowledged_cleanup_journal_at, clear_cleanup_journal,
-    ensure_path_identity, ensure_recovery_path_unchanged, is_safe_stage_dir_name, move_plan_path,
-    read_cleanup_journal_any_version_at, read_cleanup_journal_at,
-    read_recoverable_cleanup_journal_at, remove_recovery_regular_file_if_matches,
-    ArchiveJournalPhase, CleanupJournal, ExtractJournalPhase, FileIdentity, RecoveryFailure,
-    RecoveryKind,
+    ensure_path_identity, ensure_recovery_path_unchanged, file_identities_match,
+    is_safe_stage_dir_name, move_plan_path, read_cleanup_journal_any_version_at,
+    read_cleanup_journal_at, read_recoverable_cleanup_journal_at,
+    remove_recovery_regular_file_if_matches, ArchiveJournalPhase, CleanupJournal,
+    ExtractJournalPhase, FileIdentity, RecoveryFailure, RecoveryKind,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Whether the most recent recovery attempt failed in a way acknowledgment may
+/// resolve without recovering the journal. Read only under `RECOVERY_LOCK`.
+static RECOVERY_FAILURE_ACKNOWLEDGEABLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 /// Set after the startup maintenance thread finishes its one-shot recovery pass.
 /// `run_7z` waits for this so it cannot race startup recovery against a live journal.
 static STARTUP_RECOVERY_DONE: std::sync::atomic::AtomicBool =
@@ -91,12 +97,15 @@ fn recover_missing_extract_stage_failure(journal: &CleanupJournal) -> Result<(),
     let destination_metadata = match std::fs::symlink_metadata(&journal.destination) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(
-                "Extraction stage and destination are both missing; preserving the recovery journal."
-                    .into(),
-            );
+            return Err(RecoveryFailure::acknowledgeable(
+                "Extraction stage and destination are both missing; preserving the recovery journal.",
+            ));
         }
-        Err(error) => return Err(error.to_string().into()),
+        Err(error) => {
+            return Err(RecoveryFailure::acknowledgeable(format!(
+                "Extraction stage is missing and its destination is unreachable ({error}); preserving the recovery journal."
+            )));
+        }
     };
     if crate::path_safety::is_link_or_reparse(&destination_metadata)
         || !destination_metadata.is_dir()
@@ -399,17 +408,31 @@ pub(crate) fn journal_may_be_acknowledged(journal: &CleanupJournal) -> Result<bo
     journal_is_preserved_ambiguous_publish(journal)
 }
 
-/// Accept a preserved destination as-is and drop only the recovery journal.
+/// Accept the preserved transaction as-is and drop only the recovery journal.
+///
+/// Allowed for a newer or preserved-ambiguous journal, and for any journal that
+/// the latest recovery attempt reported as acknowledgeable (missing or
+/// unreachable artifacts, an unsupported filesystem operation, a changed
+/// identity, or an unparseable journal).
 fn acknowledge_preserved_transaction_at(app: &tauri::AppHandle) -> Result<String, String> {
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
     let path = cleanup_journal_path(app)?;
+    let recovery_failed_acknowledgeably =
+        RECOVERY_FAILURE_ACKNOWLEDGEABLE.load(std::sync::atomic::Ordering::Acquire);
     // Use the any-version reader: a newer journal is acknowledged, not recovered.
-    let Some(journal) = read_cleanup_journal_any_version_at(&path)? else {
-        return Ok("No interrupted transaction requires acknowledgment.".to_string());
+    let journal = match read_cleanup_journal_any_version_at(&path) {
+        Ok(Some(journal)) => Some(journal),
+        Ok(None) => return Ok("No interrupted transaction requires acknowledgment.".to_string()),
+        Err(_) if recovery_failed_acknowledgeably => None,
+        Err(error) => return Err(error),
     };
-    if !journal_may_be_acknowledged(&journal)? {
+    let acknowledgeable = match &journal {
+        Some(journal) => recovery_failed_acknowledgeably || journal_may_be_acknowledged(journal)?,
+        None => true,
+    };
+    if !acknowledgeable {
         return Err(
             "The active recovery journal is not a preserved ambiguous publish; \
              let normal recovery resolve it."
@@ -417,25 +440,46 @@ fn acknowledge_preserved_transaction_at(app: &tauri::AppHandle) -> Result<String
         );
     }
     clear_acknowledged_cleanup_journal_at(&path)?;
+    RECOVERY_FAILURE_ACKNOWLEDGEABLE.store(false, std::sync::atomic::Ordering::Release);
     set_startup_recovery_error(None);
-    Ok(
-        if journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
-            "Recovery journal from a newer Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
+    let Some(journal) = journal else {
+        return Ok(
+            "Unreadable recovery journal accepted; files were left unchanged and the recovery journal was cleared."
+                .to_string(),
+        );
+    };
+    if let Ok(cache_dir) = app.path().app_cache_dir() {
+        if let Err(error) = super::journal::unregister_pending_stage(&cache_dir, &journal.stage) {
+            eprintln!(
+                "Could not clear the pending record for an acknowledged transaction: {error}"
+            );
+        }
+    }
+    Ok(acknowledgment_outcome(
+        &journal,
+        recovery_failed_acknowledgeably,
+    ))
+}
+
+fn acknowledgment_outcome(journal: &CleanupJournal, recovery_failed: bool) -> String {
+    if journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
+        "Recovery journal from a newer Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
             .to_string()
-        } else if journal.format_version < super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
-            "Recovery journal from an older Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
+    } else if journal.format_version < super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
+        "Recovery journal from an older Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
             .to_string()
-        } else if !journal.archive && !journal.move_plan_sidecar {
-            "Recovery journal without a durable move plan accepted; files were left unchanged and the recovery journal was cleared."
+    } else if !journal.archive && !journal.move_plan_sidecar {
+        "Recovery journal without a durable move plan accepted; files were left unchanged and the recovery journal was cleared."
             .to_string()
-        } else if super::journal::ensure_journal_format_supported(&journal).is_err() {
-            "Recovery journal with incomplete phase metadata accepted; files were left unchanged and the recovery journal was cleared."
-                .to_string()
-        } else {
-            "Preserved extraction destination accepted; the recovery journal was cleared."
-                .to_string()
-        },
-    )
+    } else if super::journal::ensure_journal_format_supported(journal).is_err() {
+        "Recovery journal with incomplete phase metadata accepted; files were left unchanged and the recovery journal was cleared."
+            .to_string()
+    } else if recovery_failed {
+        "Interrupted transaction could not be recovered; files were left unchanged and the recovery journal was cleared."
+            .to_string()
+    } else {
+        "Preserved extraction destination accepted; the recovery journal was cleared.".to_string()
+    }
 }
 
 #[tauri::command]
@@ -492,9 +536,79 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Rec
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
-    let Some(journal) = read_recoverable_cleanup_journal_at(&path)? else {
+    let result = recover_journal_at(app, &path).map_err(classify_recovery_failure);
+    RECOVERY_FAILURE_ACKNOWLEDGEABLE.store(
+        matches!(&result, Err(failure) if failure.acknowledgeable),
+        std::sync::atomic::Ordering::Release,
+    );
+    result
+}
+
+fn classify_recovery_failure(failure: RecoveryFailure) -> RecoveryFailure {
+    if matches!(failure.kind, RecoveryKind::Error)
+        && is_unsupported_operation_message(&failure.message)
+    {
+        return RecoveryFailure::acknowledgeable(failure.message);
+    }
+    failure
+}
+
+/// Exclusive rename and similar calls return ENOTSUP/EOPNOTSUPP on exFAT and
+/// FAT volumes. The errno survives only in the message text.
+#[cfg(unix)]
+fn is_unsupported_operation_message(message: &str) -> bool {
+    [libc::ENOTSUP, libc::EOPNOTSUPP]
+        .iter()
+        .any(|errno| message.contains(&format!("(os error {errno})")))
+}
+
+#[cfg(not(unix))]
+fn is_unsupported_operation_message(_message: &str) -> bool {
+    false
+}
+
+fn destination_missing_or_unreachable(journal: &CleanupJournal) -> bool {
+    std::fs::symlink_metadata(&journal.destination).is_err()
+}
+
+fn ensure_stage_identity(
+    stage: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), RecoveryFailure> {
+    let Err(error) = ensure_path_identity(stage, expected) else {
         return Ok(());
     };
+    match super::journal::path_identity(stage) {
+        Ok(actual) if !file_identities_match(&actual, expected) => {
+            Err(RecoveryFailure::acknowledgeable(error))
+        }
+        _ => Err(error.into()),
+    }
+}
+
+#[cfg(unix)]
+fn stop_recorded_child(journal: &CleanupJournal) -> Result<(), String> {
+    journal
+        .child_process
+        .as_ref()
+        .map_or(Ok(()), super::journal::terminate_recorded_child)
+}
+
+#[cfg(not(unix))]
+fn stop_recorded_child(_journal: &CleanupJournal) -> Result<(), String> {
+    Ok(())
+}
+
+fn recover_journal_at(
+    app: &tauri::AppHandle,
+    path: &std::path::Path,
+) -> Result<(), RecoveryFailure> {
+    let Some(journal) = read_recoverable_cleanup_journal_at(path)? else {
+        return Ok(());
+    };
+    // A 7-Zip child from the crashed run may still be writing into the stage.
+    // Stop it before any rollback touches that stage.
+    stop_recorded_child(&journal)?;
     let stage_name = journal
         .stage
         .file_name()
@@ -538,12 +652,19 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Rec
             }
             return clear_cleanup_journal(app).map_err(RecoveryFailure::from);
         }
-        Err(error) => return Err(error.to_string().into()),
+        Err(error) => {
+            if destination_missing_or_unreachable(&journal) {
+                return Err(RecoveryFailure::acknowledgeable(format!(
+                    "Extraction stage is unreachable ({error}) and so is its destination; preserving the recovery journal."
+                )));
+            }
+            return Err(error.to_string().into());
+        }
     };
     if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
         return Err("Refusing unsafe interrupted-transaction staging directory.".into());
     }
-    ensure_path_identity(&journal.stage, stage_identity)?;
+    ensure_stage_identity(&journal.stage, stage_identity)?;
 
     if journal.archive {
         if archive_journal_is_committed(&journal) {

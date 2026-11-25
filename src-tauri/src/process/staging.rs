@@ -344,11 +344,15 @@ pub(crate) fn next_extract_stage_path(
 }
 
 pub(crate) fn rewrite_extract_output(
-    args: &mut [String],
+    args: &mut Vec<String>,
     staged_dir: &std::path::Path,
 ) -> Result<(), String> {
     crate::validation::reject_extract_output_wildcard(&staged_dir.to_string_lossy())?;
     let output = format!("-o{}", staged_dir.to_string_lossy());
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .ok_or_else(|| "Extraction command is missing '--'.".to_string())?;
     let Some(arg) = args
         .iter_mut()
         .find(|arg| arg.to_ascii_lowercase().starts_with("-o"))
@@ -356,6 +360,10 @@ pub(crate) fn rewrite_extract_output(
         return Err("Extraction command is missing an output directory.".to_string());
     };
     *arg = output;
+    args.splice(
+        separator..separator,
+        EXTRACT_FINDER_METADATA_EXCLUSIONS.map(str::to_string),
+    );
     Ok(())
 }
 

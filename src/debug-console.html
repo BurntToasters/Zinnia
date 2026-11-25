@@ -17,6 +17,17 @@
     <link rel="stylesheet" href="/debug-console.css" />
   </head>
   <body>
+    <script>
+      (function () {
+        const ua = navigator.userAgent;
+        const platform = /Macintosh|Mac OS X/.test(ua)
+          ? "macos"
+          : /Windows/.test(ua)
+            ? "windows"
+            : "linux";
+        document.body.classList.add("platform-" + platform);
+      })();
+    </script>
     <div id="titlebar" data-tauri-drag-region>
       <div class="titlebar-logo" data-tauri-drag-region>
         <img

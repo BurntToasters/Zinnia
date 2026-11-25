@@ -13,22 +13,94 @@ use super::{
 pub(crate) const MAX_EXTRACT_ENTRIES: u64 = 1_000_000;
 pub(crate) const MAX_EXTRACT_PATH_BYTES: u64 = 32 * 1024 * 1024;
 
-pub(crate) fn available_space_for_path(path: &std::path::Path) -> Result<u64, String> {
+fn existing_extract_parent(path: &std::path::Path) -> Result<&std::path::Path, String> {
     // Do not follow directory symlinks: free-space for a redirected mount could
     // disagree with where staged output actually lands.
-    let existing = path
-        .ancestors()
+    path.ancestors()
         .find(|candidate| {
             std::fs::symlink_metadata(candidate)
                 .map(|meta| meta.is_dir() && !crate::path_safety::is_link_or_reparse(&meta))
                 .unwrap_or(false)
         })
-        .ok_or_else(|| "Could not find an existing extraction parent directory.".to_string())?;
-    available_space(existing)
+        .ok_or_else(|| "Could not find an existing extraction parent directory.".to_string())
+}
+
+/// Free bytes for unprivileged writers on the volume holding `path`. `None`
+/// means the macOS important-usage query failed; the failure is logged and the
+/// caller skips its disk-space gate rather than failing the operation.
+pub(crate) fn free_space_for_path(path: &std::path::Path) -> Result<Option<u64>, String> {
+    volume_free_space(existing_extract_parent(path)?)
+}
+
+/// Free bytes for callers without a degraded mode: falls back to the statvfs
+/// figure when the macOS important-usage query fails.
+pub(crate) fn available_space_for_path(path: &std::path::Path) -> Result<u64, String> {
+    let existing = existing_extract_parent(path)?;
+    match volume_free_space(existing)? {
+        Some(bytes) => Ok(bytes),
+        None => available_space(existing),
+    }
+}
+
+#[cfg(target_os = "macos")]
+static IMPORTANT_USAGE_FAILURE_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn volume_free_space(path: &std::path::Path) -> Result<Option<u64>, String> {
+    let statvfs_bytes = available_space(path)?;
+    #[cfg(target_os = "macos")]
+    {
+        // statvfs excludes APFS purgeable space; Finder reports the important-usage
+        // figure, which includes it. Use whichever is larger.
+        match important_usage_capacity(path) {
+            Ok(bytes) => Ok(Some(statvfs_bytes.max(bytes))),
+            Err(error) => {
+                if !IMPORTANT_USAGE_FAILURE_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    eprintln!(
+                        "Warning: could not read macOS important-usage free space; skipping the disk-space reserve check: {error}"
+                    );
+                }
+                Ok(None)
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(Some(statvfs_bytes))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn important_usage_capacity(path: &std::path::Path) -> Result<u64, String> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{NSString, NSURLVolumeAvailableCapacityForImportantUsageKey, NSURL};
+
+    let path = path
+        .to_str()
+        .ok_or_else(|| "Extraction path is not valid UTF-8.".to_string())?;
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    let mut value: Option<Retained<AnyObject>> = None;
+    // SAFETY: the key is a Foundation-provided NSURLResourceKey constant and
+    // `value` is the Option<Retained<AnyObject>> out-parameter Foundation fills.
+    unsafe {
+        url.getResourceValue_forKey_error(
+            &mut value,
+            NSURLVolumeAvailableCapacityForImportantUsageKey,
+        )
+    }
+    .map_err(|error| error.localizedDescription().to_string())?;
+    let value = value.ok_or_else(|| "Volume reported no important-usage capacity.".to_string())?;
+    // SAFETY: the resource value for this key is an NSNumber, which responds to longLongValue.
+    let bytes: i64 = unsafe { msg_send![&*value, longLongValue] };
+    u64::try_from(bytes)
+        .map_err(|_| "Volume reported a negative important-usage capacity.".to_string())
 }
 
 #[cfg(unix)]
-pub(crate) fn available_space(path: &std::path::Path) -> Result<u64, String> {
+fn available_space(path: &std::path::Path) -> Result<u64, String> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())
         .map_err(|_| "Extraction path contains an invalid NUL byte.".to_string())?;
@@ -47,7 +119,7 @@ pub(crate) fn available_space(path: &std::path::Path) -> Result<u64, String> {
 }
 
 #[cfg(windows)]
-pub(crate) fn available_space(path: &std::path::Path) -> Result<u64, String> {
+fn available_space(path: &std::path::Path) -> Result<u64, String> {
     use std::os::windows::ffi::OsStrExt;
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     let has_trailing_separator = wide
@@ -194,9 +266,9 @@ pub(crate) async fn monitor_extract_quota_with_manifest(
         // adaptive so a very large extraction cannot spend most of its time repeatedly walking
         // the same tree; the mandatory pre-promotion scan remains the final authority.
         let free_path = staged.clone();
-        let free_space = tokio::task::spawn_blocking(move || available_space(&free_path)).await;
+        let free_space = tokio::task::spawn_blocking(move || free_space_for_path(&free_path)).await;
         let low_space_reason = match free_space {
-            Ok(Ok(bytes))
+            Ok(Ok(Some(bytes)))
                 if bytes
                     <= min_free_bytes.saturating_add(TRANSIENT_FREE_SPACE_HEADROOM) =>
             {

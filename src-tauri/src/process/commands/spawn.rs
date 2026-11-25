@@ -208,6 +208,12 @@ fn password_contains_line_break(value: &str) -> bool {
     value.contains(['\r', '\n', '\0', '\u{2028}', '\u{2029}'])
 }
 
+/// Windows reports a closed pipe end as ERROR_NO_DATA (232) rather than EPIPE.
+fn stdin_closed_by_child(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::BrokenPipe
+        || (cfg!(windows) && error.raw_os_error() == Some(232))
+}
+
 /// Secret still owed to 7-Zip stdin after the child is registered for cancel.
 pub(crate) struct PendingPassword {
     password: String,
@@ -241,6 +247,101 @@ fn send_command_event(tx: &Sender<CommandEvent>, event: CommandEvent) {
     let _ = block_on(async move { tx.send(event).await });
 }
 
+/// Ask Linux to SIGKILL 7-Zip when Zinnia dies, so a force-quit cannot leave it
+/// writing into a stage. The signal follows the spawning thread, which belongs
+/// to the long-lived async runtime that starts every operation.
+#[cfg(target_os = "linux")]
+fn configure_parent_death_signal(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt as _;
+    let parent = std::process::id();
+    // SAFETY: the closure runs in the forked child before exec and calls only
+    // async-signal-safe libc functions.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // If Zinnia died between fork and prctl, the signal was missed and
+            // the child is already reparented. Refuse to run in that case.
+            if libc::getppid() != parent as libc::pid_t {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Windows has no parent-death signal. Every 7-Zip child joins one process-wide
+/// job created with kill-on-close, and the handle is never closed, so the OS
+/// ends the children when Zinnia exits, including force-quit and panic=abort.
+/// Assignment failure is logged and never fails the operation.
+#[cfg(windows)]
+fn assign_child_to_kill_on_close_job(pid: u32) {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
+
+    static KILL_ON_CLOSE_JOB: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    let job = KILL_ON_CLOSE_JOB.get_or_init(|| {
+        // SAFETY: null security attributes and name create an unnamed job.
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            eprintln!(
+                "Warning: could not create the 7-Zip kill-on-exit job: {}",
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: `limits` is a live, initialized structure and the length passed is its exact size.
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            eprintln!(
+                "Warning: could not configure the 7-Zip kill-on-exit job: {}",
+                std::io::Error::last_os_error()
+            );
+            // SAFETY: `job` is the handle created above and is not used again.
+            unsafe { CloseHandle(job) };
+            return None;
+        }
+        Some(job as usize)
+    });
+    let Some(job) = *job else {
+        return;
+    };
+    // SAFETY: OpenProcess returns a new handle, or null on failure, which is checked below.
+    let process: HANDLE = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
+    if process.is_null() {
+        eprintln!(
+            "Warning: could not open 7-Zip process {pid} to join the kill-on-exit job: {}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    // SAFETY: both handles are live; `process` was opened above with the access rights this call needs.
+    let assigned = unsafe { AssignProcessToJobObject(job as HANDLE, process) };
+    let error = (assigned == 0).then(std::io::Error::last_os_error);
+    // SAFETY: `process` is not used after this call.
+    unsafe { CloseHandle(process) };
+    if let Some(error) = error {
+        eprintln!("Warning: could not add 7-Zip process {pid} to the kill-on-exit job: {error}");
+    }
+}
+
 fn spawn_child_output(
     command: &mut std::process::Command,
     state: &RunningProcess,
@@ -252,7 +353,11 @@ fn spawn_child_output(
         test_hooks,
     } = options;
 
+    #[cfg(target_os = "linux")]
+    configure_parent_death_signal(command);
     let child = Arc::new(SharedChild::spawn(command).map_err(|error| error.to_string())?);
+    #[cfg(windows)]
+    assign_child_to_kill_on_close_job(child.id());
     let setup = (|| {
         let stdout = child
             .take_stdout()
@@ -456,10 +561,18 @@ fn complete_password_transport_blocking(
                 .take_stdin()
                 .ok_or_else(|| "Could not open 7-Zip password input.".to_string())?;
             for _ in 0..prompt_writes.max(1) {
-                stdin
+                match stdin
                     .write_all(password.as_bytes())
                     .and_then(|_| stdin.write_all(b"\n"))
-                    .map_err(|error| format!("Could not provide the archive password: {error}"))?;
+                {
+                    Ok(()) => {}
+                    // 7-Zip exited without reading stdin, so it needed no password.
+                    // Its exit status decides the outcome, not this write.
+                    Err(error) if stdin_closed_by_child(&error) => break,
+                    Err(error) => {
+                        return Err(format!("Could not provide the archive password: {error}"));
+                    }
+                }
             }
             drop(stdin);
             Ok::<_, String>(())

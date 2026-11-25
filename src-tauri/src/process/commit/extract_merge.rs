@@ -19,13 +19,17 @@ use super::archive_promote::promote_archive_family_with_commit;
 use super::publish::copy_windows_directory_metadata;
 use super::publish::{
     copy_file_no_replace_with_created, copy_tree_with_inherited_acl, rename_file_no_replace,
+    CopyJournalPhase,
 };
 use super::staged_tree::{
     is_publish_temp_name, plan_staged_contents, sync_staged_tree_without_fingerprint,
     validate_and_sync_staged_tree, MAX_EXTRACTED_BYTES,
 };
 use super::sync_file_best_effort;
-use super::{assert_safe_extract_target_ancestors, remove_plan_stage_if_owned, PublishStrategy};
+use super::{
+    assert_safe_extract_target_ancestors, is_apple_double_sidecar_name,
+    refresh_identity_after_first_write, remove_plan_stage_if_owned, PublishStrategy,
+};
 
 fn prepare_target_local_publish_paths(
     plan: &mut [MoveRecord],
@@ -113,6 +117,7 @@ struct MoveIdentityLogRecord {
 struct MoveIdentityLogWriter {
     path: std::path::PathBuf,
     file: std::fs::File,
+    /// Identity of the held log; refreshed across the first non-empty append.
     creation_identity: FileIdentity,
     hasher: sha2::Sha256,
     bytes_written: u64,
@@ -205,6 +210,7 @@ impl MoveIdentityLogWriter {
         {
             return Err("Extraction identity log exceeds its safety limit.".to_string());
         }
+        let previous_len = self.bytes_written;
         self.file
             .write_all(&bytes)
             .map_err(|error| error.to_string())?;
@@ -212,12 +218,17 @@ impl MoveIdentityLogWriter {
         self.hasher.update(&bytes);
         self.bytes_written = next_bytes;
         self.records_written = next_records;
-        let identity = self.current_identity();
-        let actual = file_identity(&self.file)?;
+        let Some(actual) =
+            refresh_identity_after_first_write(&self.file, &self.creation_identity, previous_len)?
+        else {
+            return Err("Extraction identity log changed during append.".to_string());
+        };
         let metadata = self.file.metadata().map_err(|error| error.to_string())?;
-        if !file_identities_match(&actual, &identity) || metadata.len() != self.bytes_written {
+        if metadata.len() != self.bytes_written {
             return Err("Extraction identity log changed during append.".to_string());
         }
+        self.creation_identity = actual;
+        let identity = self.current_identity();
         ensure_path_identity(&self.path, &identity)?;
         Ok(identity)
     }
@@ -340,9 +351,17 @@ fn publish_target_local_copy<R: ExtractArtifactRecorder>(
     }
 
     let copy_result = if metadata.is_file() {
-        copy_file_no_replace_with_created(&source, &publish_temp, |_, identity| {
-            record_publish_identity(recorder, identity_log, plan, index, identity)
-        })
+        // The post-copy identity is journaled below, before the rename.
+        copy_file_no_replace_with_created(
+            &source,
+            &publish_temp,
+            |_, identity, phase| match phase {
+                CopyJournalPhase::Created => {
+                    record_publish_identity(recorder, identity_log, plan, index, identity)
+                }
+                CopyJournalPhase::Copied => Ok(()),
+            },
+        )
     } else if metadata.is_dir() {
         // Create under the final parent so default ACL / setgid / NTFS policy
         // inherit. Windows uses the inheriting helper for SMB-safe DACLs;
@@ -1140,9 +1159,20 @@ pub(crate) fn ensure_extract_stage_has_output(
     staged: &std::path::Path,
     manifest_entry_count: Option<u64>,
 ) -> Result<(), String> {
-    let mut entries = std::fs::read_dir(staged)
-        .map_err(|error| format!("Could not inspect extraction stage: {error}"))?;
-    if entries.next().is_some() || manifest_entry_count == Some(0) {
+    let mut has_content = false;
+    for entry in std::fs::read_dir(staged)
+        .map_err(|error| format!("Could not inspect extraction stage: {error}"))?
+    {
+        let is_sidecar = entry.as_ref().is_ok_and(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_file())
+                && is_apple_double_sidecar_name(&entry.file_name())
+        });
+        if !is_sidecar {
+            has_content = true;
+            break;
+        }
+    }
+    if has_content || manifest_entry_count == Some(0) {
         return Ok(());
     }
     Err("Extraction produced no files; output was not published.".to_string())

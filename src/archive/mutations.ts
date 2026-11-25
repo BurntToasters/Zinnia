@@ -51,6 +51,7 @@ import {
   userFacingBackendError,
 } from "../error-hints";
 import { basename } from "../path-display";
+import { looksLikeWindowsPath } from "../extract-path";
 import type { ArchiveInfo } from "../browse-model";
 
 let mutationDialogOpen = false;
@@ -296,15 +297,18 @@ function convertDefaultName(archive: string, format: string): string {
 
 /** Same directory as the source archive, so the save dialog opens there. */
 function siblingPath(archive: string, name: string): string {
+  // `\` only separates Windows-shaped paths; on POSIX it is a file name character.
   const separator = Math.max(
     archive.lastIndexOf("/"),
-    archive.lastIndexOf("\\"),
+    looksLikeWindowsPath(archive) ? archive.lastIndexOf("\\") : -1,
   );
   return separator < 0 ? name : `${archive.slice(0, separator + 1)}${name}`;
 }
 
 function samePath(a: string, b: string): boolean {
-  const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+  const windowsLike = looksLikeWindowsPath(a) || looksLikeWindowsPath(b);
+  const normalize = (value: string) =>
+    (windowsLike ? value.replace(/\\/g, "/") : value).toLowerCase();
   return normalize(a) === normalize(b);
 }
 
@@ -427,8 +431,9 @@ function askConvertOptions(
     };
 
     const showError = (message: string) => {
-      errorLine.textContent = message;
+      // Unhide the alert first so its live-region text change is announced.
       errorLine.hidden = false;
+      errorLine.textContent = message;
     };
     const clearError = () => {
       errorLine.textContent = "";
@@ -623,6 +628,7 @@ export async function convertArchive(): Promise<void> {
   }
 
   let sourceEncrypted: boolean;
+  let sourceIdentity: string;
   try {
     const [validation] = await ensureArchivePaths(
       [archive],
@@ -633,7 +639,8 @@ export async function convertArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
-    const info = await sourceArchiveInfo(archive, validation.identity);
+    sourceIdentity = validation.identity;
+    const info = await sourceArchiveInfo(archive, sourceIdentity);
     if (!info) {
       // Browse has already said why. A cancel is not an error to repeat.
       if (!state.cancelRequested) {
@@ -714,6 +721,14 @@ export async function convertArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
+    if (validation.identity !== sourceIdentity) {
+      showToast(
+        "The archive changed since it was opened. Open it again, then convert it.",
+        "error",
+        0,
+      );
+      return;
+    }
     // Reserve a managed leaf without creating it. The extraction backend can
     // then publish the completed stage by rename instead of copying into an
     // already-created empty conversion directory.
@@ -735,12 +750,7 @@ export async function convertArchive(): Promise<void> {
     debugLogCommand(extractArgs);
     const extract = await withLiveProgress(() => {
       sevenZipStarted = true;
-      return runWithPasswordRetry(
-        extractArgs,
-        true,
-        "Extract",
-        validation.identity,
-      );
+      return runWithPasswordRetry(extractArgs, true, "Extract", sourceIdentity);
     });
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);

@@ -39,6 +39,17 @@ fn bundle_root_for_exe(exe: &Path) -> Option<PathBuf> {
     Some(bundle.to_path_buf())
 }
 
+/// macOS App Translocation mounts a quarantined bundle at a randomized,
+/// read-only path that disappears when Zinnia exits. It can never be the
+/// `open` target of a relaunch helper.
+#[cfg(target_os = "macos")]
+fn bundle_is_translocated(bundle: &Path) -> bool {
+    bundle.components().any(|component| match component {
+        std::path::Component::Normal(part) => part.eq_ignore_ascii_case("AppTranslocation"),
+        _ => false,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn spawn_relaunch_helper(pid: u32, bundle: &Path) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
@@ -87,10 +98,23 @@ fn relaunch_through_helper(_app: &tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn relaunch_app(app: tauri::AppHandle) {
+pub fn relaunch_app(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| bundle_root_for_exe(&exe))
+    {
+        if bundle_is_translocated(&bundle) {
+            return Err(format!(
+                "Zinnia is running from a translocated bundle at {}. macOS App Translocation prevents a safe relaunch. Move Zinnia.app to Applications, then reopen it.",
+                bundle.display()
+            ));
+        }
+    }
     if !relaunch_through_helper(&app) {
         app.request_restart();
     }
+    Ok(())
 }
 
 #[cfg(test)]

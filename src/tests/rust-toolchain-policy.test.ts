@@ -125,7 +125,7 @@ describe("Rust toolchain policy", () => {
   it("extracts the pin after checkout in every CI job that installs Rust", () => {
     const rustToolchain = readPinnedRustToolchain();
     for (const [workflowPath, expectedConsumers] of [
-      [".github/workflows/ci.yml", 6],
+      [".github/workflows/ci.yml", 7],
       [".github/workflows/archive-io-benchmark.yml", 1],
     ] as const) {
       const workflow = readRepositoryFile(workflowPath);

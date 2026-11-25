@@ -103,6 +103,7 @@ input[type="number"] {
   background: var(--surface-alt);
   cursor: pointer;
   position: relative;
+  flex: 0 0 auto;
   flex-shrink: 0;
   transition: all var(--transition);
 }

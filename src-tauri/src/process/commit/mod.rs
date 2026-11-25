@@ -33,9 +33,75 @@ pub(crate) use staged_tree::MAX_EXTRACTED_BYTES;
 
 pub(crate) use crate::fs_secure::sync_file_best_effort;
 
-use super::journal::{file_identities_match, file_identity, unregister_plan_stages_strict};
+use super::journal::{
+    file_identities_match, file_identity, unregister_plan_stages_strict, FileIdentity,
+};
 use super::staging::{assert_real_directory, path_entry_exists};
 use super::{ArchiveDestinationSnapshot, CleanupPlan};
+
+/// FAT/exFAT store xattrs in `._<name>` AppleDouble sidecars that the OS
+/// regenerates. This is safe to treat as metadata because extraction passes
+/// `-xr!._*`, so no real archive member can carry the prefix.
+pub(super) fn is_apple_double_sidecar_name(name: &std::ffi::OsStr) -> bool {
+    name.as_encoded_bytes().starts_with(b"._")
+}
+
+/// msdosfs (FAT/exFAT) reports a placeholder inode for an empty file, and only
+/// after its first write allocates a cluster does the same open handle (and the
+/// path) report the real inode. The held handle is the authority, so a changed
+/// identity is accepted only across the first 0 -> >0 byte transition on an
+/// unchanged device. Returns `None` for any other change. Callers must journal
+/// the returned identity in place of the creation-time one.
+fn refresh_identity_after_first_write(
+    held: &std::fs::File,
+    previous: &FileIdentity,
+    previous_len: u64,
+) -> Result<Option<FileIdentity>, String> {
+    let actual = file_identity(held)?;
+    if file_identities_match(&actual, previous) {
+        return Ok(Some(actual));
+    }
+    let len = held.metadata().map_err(|error| error.to_string())?.len();
+    if previous_len == 0 && len > 0 && same_identity_device(&actual, previous) {
+        Ok(Some(actual))
+    } else {
+        Ok(None)
+    }
+}
+
+fn same_identity_device(actual: &FileIdentity, previous: &FileIdentity) -> bool {
+    match (actual, previous) {
+        (
+            FileIdentity::Unix {
+                device: actual_device,
+                ..
+            },
+            FileIdentity::Unix {
+                device: previous_device,
+                ..
+            },
+        ) => actual_device == previous_device,
+        (
+            FileIdentity::Windows {
+                volume_serial_number: actual_volume,
+                volume_serial_number_64: actual_volume_64,
+                ..
+            },
+            FileIdentity::Windows {
+                volume_serial_number: previous_volume,
+                volume_serial_number_64: previous_volume_64,
+                ..
+            },
+        ) => {
+            actual_volume == previous_volume
+                && match (actual_volume_64, previous_volume_64) {
+                    (Some(actual), Some(previous)) => actual == previous,
+                    _ => true,
+                }
+        }
+        _ => false,
+    }
+}
 
 pub(crate) fn archive_destination_snapshot(
     path: &std::path::Path,

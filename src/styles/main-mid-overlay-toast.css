@@ -92,6 +92,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -142,6 +143,7 @@
   font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
   font-size: 0.75rem;
   line-height: 1.4;
+  -webkit-user-select: text;
   user-select: text;
   color: var(--text-secondary);
 }

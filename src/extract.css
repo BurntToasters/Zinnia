@@ -117,6 +117,7 @@ html[data-window-fx="basic"] body {
 .extract-value {
   font-size: 0.75rem;
   color: var(--text);
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -228,6 +229,7 @@ html[data-window-fx="basic"] body {
   max-height: 120px;
   overflow-y: auto;
   font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -275,7 +277,7 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
   place-items: center;
   padding: 20px;
   background: rgb(0 0 0 / 45%);
-  z-index: 10;
+  z-index: 10000;
 }
 
 .extract-input-modal {
@@ -444,6 +446,7 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
   color: var(--text);
   font-size: 0.75rem;
   font-weight: 500;
+  -webkit-user-select: none;
   user-select: none;
   border-bottom: 1px solid var(--border);
   position: relative;

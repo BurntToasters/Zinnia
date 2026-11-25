@@ -2,8 +2,30 @@
 
 use crate::process::archive_snapshot::stage_extract_input_with_progress;
 use crate::process::commit::archive_destination_family_snapshot;
-use crate::process::quota::available_space_for_path;
+use crate::process::quota::free_space_for_path;
 use crate::process::CleanupPlan;
+
+const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
+const MIN_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Extracted-byte ceiling for an archive of `archive_bytes`: 1000 times its
+/// compressed size, capped at 1 TiB.
+pub(crate) fn extract_ratio_limit(archive_bytes: u64) -> u64 {
+    archive_bytes.saturating_mul(1000).min(MAX_EXTRACT_BYTES)
+}
+
+/// Splits the destination's free space into the extract budget and the reserve.
+/// `None` free space (probe unavailable) drops the disk bound and the reserve.
+fn disk_budget(ratio_limit: u64, free_space: Option<u64>) -> (u64, u64) {
+    match free_space {
+        Some(free_space) => {
+            let reserve = (free_space / 10).max(MIN_DISK_RESERVE_BYTES);
+            let disk_limit = free_space.saturating_sub(reserve);
+            (ratio_limit.min(disk_limit), reserve)
+        }
+        None => (ratio_limit, 0),
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn prepare_cleanup_plan(
@@ -84,8 +106,6 @@ where
     }
     let Some(target) = super::operation_output_path(args) else {
         if matches!(command, Some("l" | "t")) && compound_stream {
-            const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
-            const MIN_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
@@ -97,13 +117,9 @@ where
                 &on_snapshot_progress,
             )?;
             let preparation = (|| {
-                let ratio_limit = staged_input
-                    .total_len
-                    .saturating_mul(1000)
-                    .min(MAX_EXTRACT_BYTES);
-                let free_space = available_space_for_path(&staged_input.path)?;
-                let reserve = (free_space / 10).max(MIN_DISK_RESERVE_BYTES);
-                let max_bytes = ratio_limit.min(free_space.saturating_sub(reserve));
+                let ratio_limit = extract_ratio_limit(staged_input.total_len);
+                let free_space = free_space_for_path(&staged_input.path)?;
+                let (max_bytes, reserve) = disk_budget(ratio_limit, free_space);
                 if max_bytes == 0 {
                     return Err(
                         "Not enough free space to inspect the compound TAR stream.".to_string()
@@ -185,8 +201,6 @@ where
                 .iter()
                 .position(|arg| arg == "--")
                 .unwrap_or(args.len());
-            const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
-            const MIN_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
             let created_stage = super::next_extract_stage_path(&destination, cache_ref)?;
             let stage = created_stage.path;
             let stage_identity = created_stage.identity;
@@ -213,20 +227,15 @@ where
                 }
             };
             let preparation = (|| {
-                let ratio_limit = staged_input
-                    .total_len
-                    .saturating_mul(1000)
-                    .min(MAX_EXTRACT_BYTES);
-                let free_space = available_space_for_path(&destination)?;
-                let reserve = (free_space / 10).max(MIN_DISK_RESERVE_BYTES);
-                let disk_limit = free_space.saturating_sub(reserve);
-                if disk_limit == 0 {
+                let ratio_limit = extract_ratio_limit(staged_input.total_len);
+                let free_space = free_space_for_path(&destination)?;
+                let (max_extract_bytes, reserve) = disk_budget(ratio_limit, free_space);
+                if let Some(free_space) = free_space.filter(|free| *free <= reserve) {
                     return Err(format!(
                         "Not enough free space to extract safely ({} MiB available).",
                         free_space / (1024 * 1024)
                     ));
                 }
-                let max_extract_bytes = ratio_limit.min(disk_limit);
                 Ok((max_extract_bytes, reserve))
             })();
             let (max_extract_bytes, reserve) = match preparation {

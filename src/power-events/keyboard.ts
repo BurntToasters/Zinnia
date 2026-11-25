@@ -10,7 +10,7 @@ import {
 import { closeLicensesModal } from "../licenses";
 import { getMode, getWorkspaceMode } from "../ui";
 import { getBasicView, syncBasicBeforeRun, type BasicView } from "../basic";
-import { isEditableTarget } from "../power-helpers";
+import { isBlockingModalOpen, isEditableTarget } from "../power-helpers";
 import { openShortcutsModal, closeShortcutsModal } from "../power-shortcuts";
 
 const BASIC_PRIMARY_RUN_BUTTON_IDS: Partial<Record<BasicView, string>> = {
@@ -35,19 +35,21 @@ export function wireGlobalKeyboardEvents(): void {
       }
       return;
     }
-    if (!$("input-modal-overlay").hidden) {
+    if (isBlockingModalOpen()) {
       if (e.key === "Escape") {
-        return;
-      }
-      if (
+        // The rename/input prompt's own handler dismisses it. Otherwise the
+        // close chain below dismisses the topmost sheet, so Escape must not be
+        // swallowed here.
+        if (!$("input-modal-overlay").hidden) return;
+      } else if (
         e.key === "?" ||
-        (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ||
-        (e.key === "," && (e.ctrlKey || e.metaKey))
+        (e.key === "Enter" && (e.ctrlKey || e.metaKey))
       ) {
         return;
       }
     }
     if (e.key === "," && (e.ctrlKey || e.metaKey)) {
+      if (isBlockingModalOpen("settings-overlay")) return;
       e.preventDefault();
       // Licenses can be stacked above Settings. Do not toggle the lower sheet
       // while the topmost modal owns focus.
@@ -86,33 +88,14 @@ export function wireGlobalKeyboardEvents(): void {
       }
     }
     if (e.key === "?" && !isEditableTarget(e.target)) {
-      if (
-        !$("setup-wizard-overlay").hidden ||
-        !$("settings-overlay").hidden ||
-        !$("selective-overlay").hidden ||
-        !$("command-preview-overlay").hidden ||
-        !$("licenses-overlay").hidden ||
-        !$("input-modal-overlay").hidden ||
-        !$("convert-overlay").hidden
-      )
-        return;
+      if (isBlockingModalOpen()) return;
       e.preventDefault();
       openShortcutsModal();
       return;
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       if (isImeComposing(e)) return;
-      if (
-        !$("setup-wizard-overlay").hidden ||
-        !$("settings-overlay").hidden ||
-        !$("input-modal-overlay").hidden ||
-        !$("licenses-overlay").hidden ||
-        !$("selective-overlay").hidden ||
-        !$("command-preview-overlay").hidden ||
-        !$("shortcuts-overlay").hidden ||
-        !$("convert-overlay").hidden
-      )
-        return;
+      if (isBlockingModalOpen()) return;
       // The backend runs at most one 7z operation at a time. Basic
       // preparation (password probes, encryption checks) and incoming-path
       // application both run with `state.running === false`, so this global

@@ -1,8 +1,6 @@
 name: Archive I/O benchmark
 
 on:
-  schedule:
-    - cron: "17 9 * * *"
   workflow_dispatch:
     inputs:
       candidate_ref:

@@ -9,12 +9,39 @@ fn apply_macos(window: &WebviewWindow) -> Result<(), String> {
     apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, None).map_err(|e| e.to_string())
 }
 
+/// Upper bound on clear passes so a misbehaving view tree cannot spin forever.
+#[cfg(target_os = "macos")]
+const MAX_VIBRANCY_CLEAR_PASSES: usize = 16;
+
+/// `apply_vibrancy` adds a new NSVisualEffectView on every call, while
+/// `clear_vibrancy` removes one. Drain the stack until nothing is left.
 #[cfg(target_os = "macos")]
 fn clear_macos(window: &WebviewWindow) -> Result<(), String> {
     use window_vibrancy::clear_vibrancy;
-    clear_vibrancy(window)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    for _ in 0..MAX_VIBRANCY_CLEAR_PASSES {
+        match clear_vibrancy(window) {
+            Ok(true) => continue,
+            Ok(false) => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
+
+/// Sets the app-wide NSApp appearance. Pinning it to Dark/Light stops WKWebView
+/// from following OS appearance changes (prefers-color-scheme), so when the
+/// user's theme is "system" the override is cleared with `set_theme(None)`
+/// instead. tauri applies this with `[NSApp setAppearance:]`, not per window.
+#[cfg(target_os = "macos")]
+fn apply_macos_appearance(window: &WebviewWindow, dark: bool, follow_system: bool) {
+    let theme = if follow_system {
+        None
+    } else if dark {
+        Some(tauri::Theme::Dark)
+    } else {
+        Some(tauri::Theme::Light)
+    };
+    let _ = window.set_theme(theme);
 }
 
 #[cfg(target_os = "windows")]
@@ -67,10 +94,16 @@ fn paint_transparent_background(window: &WebviewWindow) {
     let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
 }
 
-pub fn apply_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), String> {
+pub fn apply_basic_window_fx(
+    window: &WebviewWindow,
+    dark: bool,
+    follow_system: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let _ = dark;
+        apply_macos_appearance(window, dark, follow_system);
+        // Remove any previously stacked effect views before adding a new one.
+        let _ = clear_macos(window);
         paint_transparent_background(window);
         let result = apply_macos(window);
         if result.is_err() {
@@ -80,6 +113,7 @@ pub fn apply_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
     }
     #[cfg(target_os = "windows")]
     {
+        let _ = follow_system;
         paint_transparent_background(window);
         let result = apply_windows(window, dark);
         if result.is_err() {
@@ -89,27 +123,34 @@ pub fn apply_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = dark;
+        let _ = (dark, follow_system);
         paint_opaque_background(window, dark);
         Ok(())
     }
 }
 
-pub fn clear_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), String> {
+pub fn clear_basic_window_fx(
+    window: &WebviewWindow,
+    dark: bool,
+    follow_system: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        apply_macos_appearance(window, dark, follow_system);
         let result = clear_macos(window);
         paint_opaque_background(window, dark);
         result
     }
     #[cfg(target_os = "windows")]
     {
+        let _ = follow_system;
         let result = clear_windows(window);
         paint_opaque_background(window, dark);
         result
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
+        let _ = follow_system;
         paint_opaque_background(window, dark);
         Ok(())
     }
@@ -117,12 +158,16 @@ pub fn clear_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
 
 /// Enable or disable Basic-mode native glass on the calling window.
 /// Linux always paints opaque and skips vibrancy APIs.
+/// `follow_system` defaults to true when omitted, so a caller that does not
+/// send it never pins the native appearance.
 #[tauri::command]
 pub fn set_workspace_window_fx(
     window: WebviewWindow,
     enabled: bool,
     dark: bool,
+    follow_system: Option<bool>,
 ) -> Result<(), String> {
+    let follow_system = follow_system.unwrap_or(true);
     if !supports_basic_window_fx() {
         paint_opaque_background(&window, dark);
         let _ = enabled;
@@ -130,9 +175,9 @@ pub fn set_workspace_window_fx(
     }
 
     if enabled {
-        apply_basic_window_fx(&window, dark)
+        apply_basic_window_fx(&window, dark, follow_system)
     } else {
-        clear_basic_window_fx(&window, dark)
+        clear_basic_window_fx(&window, dark, follow_system)
     }
 }
 

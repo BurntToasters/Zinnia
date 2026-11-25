@@ -37,7 +37,10 @@ try {
   fs.rmSync(exportDirectory, { recursive: true, force: true });
   fs.mkdirSync(exportDirectory, { recursive: true });
   run("git", ["archive", "--format=tar", `--output=${archive}`, "HEAD"]);
-  run("tar", ["-xf", archive, "-C", exportDirectory]);
+  run("tar", ["-xf", "-"], {
+    cwd: exportDirectory,
+    input: fs.readFileSync(archive),
+  });
   fs.writeFileSync(
     path.join(exportDirectory, ".zinnia-source-commit"),
     `${commit}\n`,

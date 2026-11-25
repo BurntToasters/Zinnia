@@ -36,6 +36,20 @@ fixes:
   so a slow but progressing download is not cut off. The update check keeps the
   total timeout. A server that keeps trickling bytes can hold a download open
   longer than the configured value.
+- AppImage install writes the replacement to a staged file beside the installed
+  AppImage, syncs it, copies its permissions and renames it over the original
+  (`replace_file_atomically`). The live AppImage is never moved away. The old
+  same-device temp-directory selection (`select_same_device_temp_dir`) was
+  removed.
+- macOS install also compares `CFBundleVersion` (`macos_plist_build_version`,
+  `payload_build_is_newer`) and refuses a payload whose build is not newer than
+  the installed build. It falls back to the short-version check when either
+  build is missing or unparsable.
+- macOS update backups are per bundle (`.zinnia-update-backup-<bundle name>`,
+  `macos_update_backup_path`). `recover_macos_app_backups` restores from that
+  backup or, only when the live bundle is incomplete, from the legacy shared
+  `.zinnia-update-backup`. It never deletes the legacy directory or another
+  bundle's backup.
 
 Three more changes are in this tree, outside the list above:
 

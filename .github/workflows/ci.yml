@@ -154,7 +154,6 @@ jobs:
           git diff --exit-code -- src-tauri/gen/schemas/acl-manifests.json src-tauri/gen/schemas/capabilities.json src-tauri/gen/schemas/desktop-schema.json src-tauri/gen/schemas/windows-schema.json src-tauri/gen/schemas/linux-schema.json src-tauri/gen/schemas/macOS-schema.json
 
   archive-io-benchmark:
-    needs: quality-gate
     strategy:
       matrix:
         include:
@@ -284,7 +283,6 @@ jobs:
         github.event.pull_request.base.ref == 'main' &&
         startsWith(github.head_ref, 'next-')
       }}
-    needs: quality-gate
     strategy:
       fail-fast: false
       matrix:
@@ -417,7 +415,6 @@ jobs:
           retention-days: 90
 
   rust-check:
-    needs: quality-gate
     strategy:
       matrix:
         # Pin macos-26 for the hosted smoke/E2E environment; the package floor is 15.0.
@@ -534,7 +531,6 @@ jobs:
 
   # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on build VMs.
   smoke-build:
-    needs: quality-gate
     strategy:
       matrix:
         include:
@@ -619,6 +615,47 @@ jobs:
           test -e "src-tauri/binaries/${{ matrix.sidecar }}"
           test -e "src-tauri/target/release/${{ matrix.binary }}"
 
+  # Assembles the release-shaped universal .app without signing secrets, then
+  # runs the architecture, minos, app-group, and zip checks from zip-macos.js.
+  macos-universal-smoke:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ steps.rust-pin.outputs.version }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci --ignore-scripts
+      - run: npm run prepare:7z
+      - run: npm run licenses
+      - name: Assemble unsigned universal app
+        env:
+          ZINNIA_FINDERSYNC_ALREADY_PREPARED: "1"
+        run: |
+          set -euo pipefail
+          touch .env
+          npm run prepare:macos:finder-sync
+          npx tauri build --target universal-apple-darwin --bundles app \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}' -- --locked
+      - name: Verify unsigned universal bundle
+        run: node scripts/zip-macos.js --unsigned
+
   security-audit:
     runs-on: ubuntu-latest
     # Includes `cargo install cargo-audit` from source on a cold cache.
@@ -668,6 +705,7 @@ jobs:
       - rust-check
       - updater-manifest
       - smoke-build
+      - macos-universal-smoke
       - security-audit
       - archive-io-benchmark
       - archive-io-promotion-benchmark
@@ -683,6 +721,7 @@ jobs:
           RUST_CHECK: ${{ needs.rust-check.result }}
           UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
           SMOKE_BUILD: ${{ needs.smoke-build.result }}
+          MACOS_UNIVERSAL_SMOKE: ${{ needs.macos-universal-smoke.result }}
           SECURITY_AUDIT: ${{ needs.security-audit.result }}
           ARCHIVE_IO_BENCHMARK: ${{ needs.archive-io-benchmark.result }}
           ARCHIVE_IO_PROMOTION_BENCHMARK: ${{ needs.archive-io-promotion-benchmark.result }}
@@ -696,6 +735,7 @@ jobs:
           test "$RUST_CHECK" = success
           test "$UPDATER_MANIFEST" = success
           test "$SMOKE_BUILD" = success
+          test "$MACOS_UNIVERSAL_SMOKE" = success
           test "$SECURITY_AUDIT" = success
           test "$ARCHIVE_IO_BENCHMARK" = success
           if [ "$RELEASE_PROMOTION_PR" = "true" ]; then

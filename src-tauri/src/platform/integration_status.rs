@@ -359,38 +359,95 @@ fn finder_sync_controller_class() -> Option<&'static AnyClass> {
 }
 
 #[cfg(target_os = "macos")]
+fn current_thread_is_main() -> bool {
+    let Some(thread_class) = AnyClass::get(c"NSThread") else {
+        return false;
+    };
+    // SAFETY: `thread_class` is the NSThread class object from AnyClass::get. `isMainThread` is a
+    // class method that takes no arguments and returns BOOL, matching the Rust bool return type.
+    unsafe { msg_send![thread_class, isMainThread] }
+}
+
+/// Ask FinderSync to show its management UI. Returns true when the request was
+/// issued on the main thread or is queued for it, so the caller does not open a
+/// second settings UI while the queued closure is still pending.
+#[cfg(target_os = "macos")]
 pub(crate) fn show_finder_sync_management_interface(app: &tauri::AppHandle) -> bool {
-    if finder_sync_controller_class().is_none() {
+    let Some(controller) = finder_sync_controller_class() else {
+        return false;
+    };
+    // Availability is checked before queueing so the outcome reflects only whether the
+    // management UI was requested, not whether the queued closure has run yet.
+    // SAFETY: `controller` is the FIFinderSyncController class object from AnyClass::get.
+    // The selector is checked with `respondsToSelector:` before any send to it.
+    let responds: bool = unsafe {
+        msg_send![controller, respondsToSelector: objc2::sel!(showExtensionManagementInterface)]
+    };
+    if !responds {
         return false;
     }
-    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let opened_flag = opened.clone();
-    let thread_ok = app
-        .run_on_main_thread(move || {
-            if let Some(controller) = finder_sync_controller_class() {
-                // `showExtensionManagementInterface` is FinderSync's documented
-                // route to the system-managed enablement interface.
-                // SAFETY: `controller` is the FIFinderSyncController class object from AnyClass::get.
-                // The selector is checked with `respondsToSelector:` before send. The method takes no
-                // arguments and returns nothing, and this block runs on the main thread.
-                // SAFETY: `controller` is the FIFinderSyncController class object from AnyClass::get.
-                let responds: bool = unsafe {
-                    msg_send![controller, respondsToSelector: objc2::sel!(showExtensionManagementInterface)]
-                };
-                if responds {
-                    // SAFETY: Selector presence was checked immediately above on the same class object.
-                    unsafe { msg_send![controller, showExtensionManagementInterface] }
-                    opened_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
+
+    // `showExtensionManagementInterface` is FinderSync's documented route to the
+    // system-managed enablement interface.
+    if current_thread_is_main() {
+        // Blocking on the main thread for a closure that needs the main thread would deadlock.
+        // SAFETY: Selector presence was checked immediately above on the same class object.
+        unsafe {
+            let _: () = msg_send![controller, showExtensionManagementInterface];
+        }
+        return true;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    let queued = app.run_on_main_thread(move || {
+        if let Some(controller) = finder_sync_controller_class() {
+            // SAFETY: `controller` is the FIFinderSyncController class object from AnyClass::get.
+            // This closure runs on the main thread. Selector presence was checked by the caller
+            // on the same class object before the closure was queued.
+            unsafe {
+                let _: () = msg_send![controller, showExtensionManagementInterface];
             }
-        })
-        .is_ok();
-    thread_ok && opened.load(std::sync::atomic::Ordering::Relaxed)
+            let _ = tx.send(true);
+        } else {
+            let _ = tx.send(false);
+        }
+    });
+    if queued.is_err() {
+        return false;
+    }
+    match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(showed) => showed,
+        // The closure is queued and has not run yet. It owns the request; a
+        // false here would make the caller open Login Items as well.
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
+        // The closure ran and dropped its sender without reporting a result.
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn path_is_app_translocated(path: &std::path::Path) -> bool {
+    path.components().any(|component| match component {
+        std::path::Component::Normal(part) => part.eq_ignore_ascii_case("AppTranslocation"),
+        _ => false,
+    })
+}
+
+/// True when macOS is running this bundle from a randomized App Translocation
+/// mount. Registration and relaunch must not target that transient path.
+#[cfg(target_os = "macos")]
+pub(crate) fn running_from_app_translocation() -> bool {
+    std::env::current_exe().is_ok_and(|exe| path_is_app_translocated(&exe))
 }
 
 #[cfg(target_os = "macos")]
 fn macos_finder_sync_appex_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
+    // A translocated bundle root disappears when the process exits; pluginkit
+    // would register a path that no longer exists.
+    if path_is_app_translocated(&exe) {
+        return None;
+    }
     let contents = exe.parent()?.parent()?;
     let appex = contents.join("PlugIns").join("ZinniaFinderSync.appex");
     appex.exists().then_some(appex)
@@ -399,6 +456,12 @@ fn macos_finder_sync_appex_path() -> Option<std::path::PathBuf> {
 /// Register the embedded Finder Sync appex with pluginkit (best-effort).
 #[cfg(target_os = "macos")]
 pub fn register_macos_finder_sync() {
+    if running_from_app_translocation() {
+        eprintln!(
+            "Skipped Finder Sync registration: Zinnia is running from an App Translocation path."
+        );
+        return;
+    }
     let Some(appex) = macos_finder_sync_appex_path() else {
         return;
     };
@@ -465,6 +528,14 @@ fn finder_sync_status_for(platform: &str, packaged: bool) -> FinderSyncInfo {
 
     #[cfg(target_os = "macos")]
     {
+        if running_from_app_translocation() {
+            return FinderSyncInfo {
+                available: true,
+                known: true,
+                enabled: false,
+                help: "Zinnia is running from a translocated copy, so Finder Sync cannot be registered. Move Zinnia.app to Applications, then reopen it.".to_string(),
+            };
+        }
         if macos_finder_sync_appex_path().is_none() {
             return FinderSyncInfo {
                 available: true,

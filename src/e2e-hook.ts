@@ -4,6 +4,7 @@ import {
 } from "./incoming-paths";
 import { isE2eFrontend } from "./e2e-env";
 import { flushPendingSettingsPersistence } from "./ui/workspace";
+import { handleAppMenuAction } from "./app-menu";
 import {
   queueE2eConfirmResult,
   queueE2eDialogResult,
@@ -26,6 +27,11 @@ export type E2eHook = {
    * queued by earlier UI activity cannot land on top of the seed.
    */
   flushPendingSettingsPersistence: () => Promise<void>;
+  /**
+   * Runs the same handler the `app-menu` Tauri event listener calls. The
+   * test-only event bus cannot emit from the frontend, so specs use this.
+   */
+  dispatchAppMenuAction: (action: string) => void;
   runArchiveBenchmarkOperation: (
     request: ArchiveBenchmarkRequest,
   ) => Promise<ArchiveBenchmarkResult>;
@@ -51,6 +57,7 @@ export async function installE2eHookIfEnabled(): Promise<void> {
     queueConfirmResult: queueE2eConfirmResult,
     readConfirmTitles: readE2eConfirmTitles,
     flushPendingSettingsPersistence,
+    dispatchAppMenuAction: handleAppMenuAction,
     runArchiveBenchmarkOperation,
   };
 }

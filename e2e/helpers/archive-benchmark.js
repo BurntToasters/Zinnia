@@ -612,7 +612,7 @@ function runWindowsPowerShell(command, env = process.env, timeoutMs = 5_000) {
   });
 }
 
-async function readWindowsProcessTable(timeoutMs = 5_000) {
+export async function readWindowsProcessTable(timeoutMs = 5_000) {
   const command = [
     "$ErrorActionPreference = 'Stop'",
     "Add-Type -AssemblyName System.Management",
@@ -638,7 +638,7 @@ async function readWindowsProcessTable(timeoutMs = 5_000) {
   }
 }
 
-function windowsProcessIdentity(processInfo) {
+export function windowsProcessIdentity(processInfo) {
   if (
     !Number.isSafeInteger(processInfo?.pid) ||
     processInfo.pid <= 0 ||
@@ -649,6 +649,47 @@ function windowsProcessIdentity(processInfo) {
     return null;
   }
   return { pid: processInfo.pid, created: processInfo.created };
+}
+
+/**
+ * Bounded retry for one process's exact identity. Process table snapshots can
+ * briefly expose a pid before (or without) its creation time, and callers that
+ * hand the identity to a Windows job must not proceed with a partial value.
+ */
+export async function waitForWindowsProcessIdentity(pid, options = {}) {
+  const timeoutMs = positiveProcessTimeout(options.timeoutMs, 5_000);
+  const intervalMs = positiveProcessTimeout(options.intervalMs, 50);
+  const readProcessTable =
+    options.readWindowsProcessTable ?? (() => readWindowsProcessTable());
+  const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  let lastSeen = null;
+  let lastError = null;
+  for (;;) {
+    attempts += 1;
+    try {
+      const table = await readProcessTable();
+      if (!Array.isArray(table)) {
+        lastError = "process table unavailable";
+      } else {
+        lastSeen =
+          table.find(
+            (processInfo) => Number(processInfo?.pid) === Number(pid),
+          ) ?? null;
+        const identity = lastSeen && windowsProcessIdentity(lastSeen);
+        if (identity) return { identity, attempts, lastSeen, lastError };
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    if (Date.now() >= deadline) {
+      return { identity: null, attempts, lastSeen, lastError };
+    }
+    await new Promise((resolve) => {
+      const wait = setTimeout(resolve, intervalMs);
+      wait.unref?.();
+    });
+  }
 }
 
 function windowsProcessIdentityKey(processInfo) {
@@ -856,7 +897,10 @@ export function captureWindowsProcessIdentity(child, options = {}) {
   const markLeaderExited = () => {
     state.leaderExited = true;
     state.captureStopped = true;
-    settleIdentity(state.identity);
+    // Settle only with a complete identity. The capture loop gets one bounded
+    // retry below when the leader exits before a snapshot included its
+    // creation time.
+    if (state.identity) settleIdentity(state.identity);
   };
   child.once?.("exit", markLeaderExited);
   const captureIntervalMs = positiveProcessTimeout(
@@ -928,12 +972,40 @@ export function captureWindowsProcessIdentity(child, options = {}) {
         wait.unref?.();
       });
     }
+    if (!state.identity) {
+      // The leader can exit between spawn and the first snapshot. Retry briefly
+      // so release() receives a complete pid + creation time or a precise
+      // capture failure instead of a delayed generic error.
+      const retry = await waitForWindowsProcessIdentity(child.pid, {
+        timeoutMs: positiveProcessTimeout(
+          options.identityRetryTimeoutMs,
+          1_000,
+        ),
+        intervalMs: captureIntervalMs,
+        readWindowsProcessTable: readProcessTable,
+      });
+      if (retry.identity) state.identity = retry.identity;
+      else state.captureIncomplete = true;
+    }
     settleIdentity(state.identity);
   })().catch(() => {
     state.captureIncomplete = true;
     settleIdentity(state.identity);
   });
   return state.identityPromise;
+}
+
+/**
+ * Why capture produced no exact identity, or null when it succeeded. Callers
+ * use this in launch failures so the error names the pid and observed state.
+ */
+export function windowsProcessCaptureFailure(child) {
+  const state = windowsProcessStates.get(child);
+  if (!state) return "Windows process identity capture never started";
+  if (state.identity) return null;
+  return `pid ${child.pid} was never observed with a creation time${
+    state.captureIncomplete ? " (process snapshots were incomplete)" : ""
+  }`;
 }
 
 export function hasCapturedWindowsProcessIdentity(child) {
@@ -1260,6 +1332,8 @@ export async function runArchiveBenchmarkBuildCommand(
   const buildTimeoutMs = buildCommandTimeoutMs(mergedEnv);
   const shell =
     process.platform === "win32" && /^(npm|npx)(\.cmd)?$/i.test(command);
+  const processPlatform = options.processPlatform ?? process.platform;
+  const windowsProcessOptions = options.windowsProcessOptions ?? {};
   let fencedLaunch = null;
   let child;
   if (process.platform === "win32") {
@@ -1269,6 +1343,9 @@ export async function runArchiveBenchmarkBuildCommand(
       stdio: "inherit",
       shell,
       startupTimeoutMs: Math.min(buildTimeoutMs, 20_000),
+      readWindowsProcessTable:
+        windowsProcessOptions.readWindowsProcessTable ??
+        readWindowsProcessTable,
     });
     child = fencedLaunch.child;
   } else {
@@ -1281,8 +1358,6 @@ export async function runArchiveBenchmarkBuildCommand(
       detached: true,
     });
   }
-  const processPlatform = options.processPlatform ?? process.platform;
-  const windowsProcessOptions = options.windowsProcessOptions ?? {};
   const identityCapture = captureWindowsProcessIdentity(child, {
     ...windowsProcessOptions,
     platform: processPlatform,
@@ -1324,7 +1399,7 @@ export async function runArchiveBenchmarkBuildCommand(
       ]);
       if (!identity || identity.pid !== child.pid) {
         throw new Error(
-          `Archive benchmark build launch fence could not capture its exact leader identity: ${command}`,
+          `Archive benchmark build launch fence could not capture its exact leader identity: ${command} (${windowsProcessCaptureFailure(child) ?? "capture returned no identity"})`,
         );
       }
       await Promise.race([

@@ -203,6 +203,12 @@ pub async fn enable_finder_sync() -> Result<(), String> {
         use std::process::Command;
 
         tokio::task::spawn_blocking(|| {
+            if super::integration_status::running_from_app_translocation() {
+                return Err(
+                    "Zinnia is running from a translocated copy. Move Zinnia.app to Applications, then reopen it before enabling Finder Sync."
+                        .to_string(),
+                );
+            }
             register_macos_finder_sync();
             let output = command_output_with_timeout(
                 Command::new("/usr/bin/pluginkit").args([

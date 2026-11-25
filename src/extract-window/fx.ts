@@ -49,6 +49,8 @@ export async function syncExtractWindowFx(
   // Defaults match SETTING_DEFAULTS (effects on, system theme) when settings are missing.
   const effectsEnabled = settings?.basicWindowEffects ?? true;
   const themePref: ThemePreference = settings?.theme ?? "system";
+  // Only "system" clears the app-global native appearance; explicit themes pin it.
+  const followSystem = themePref === "system";
 
   const dark =
     themePref === "dark" ||
@@ -60,7 +62,7 @@ export async function syncExtractWindowFx(
   const enabled = supports && effectsEnabled;
   document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
   try {
-    await invoke("set_workspace_window_fx", { enabled, dark });
+    await invoke("set_workspace_window_fx", { enabled, dark, followSystem });
   } catch {
     // CSS still paints correctly if native vibrancy is unavailable.
   }

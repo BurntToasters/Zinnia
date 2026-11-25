@@ -67,6 +67,24 @@ pub(crate) fn preflight_timeout_error(label: &str, timeout: std::time::Duration)
     )
 }
 
+/// 7-Zip exclusions for extract only. Finder-made ZIPs carry `__MACOSX/._x`
+/// AppleDouble members, which on FAT/exFAT would rewrite the metadata of a
+/// co-extracted `x`; `.DS_Store` is never wanted in the output.
+pub(crate) const EXTRACT_FINDER_METADATA_EXCLUSIONS: [&str; 3] =
+    ["-xr!__MACOSX", "-xr!._*", "-xr!.DS_Store"];
+
+/// True for a member that extract skips: a `__MACOSX` path component, a
+/// basename starting with `._`, or a `.DS_Store` basename.
+pub(crate) fn extract_member_is_finder_metadata(path: &str) -> bool {
+    let mut has_macosx = false;
+    let mut basename = "";
+    for component in path.split(['/', '\\']).filter(|part| !part.is_empty()) {
+        has_macosx |= component.eq_ignore_ascii_case("__MACOSX");
+        basename = component;
+    }
+    has_macosx || basename.starts_with("._") || basename.eq_ignore_ascii_case(".DS_Store")
+}
+
 /// Build `7z l -slt -ba` args from an extract command, copying switches that
 /// affect whether/how the archive can be opened.
 pub(crate) fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, String> {
@@ -159,9 +177,64 @@ struct PathlessRecord {
     has_content: bool,
 }
 
+/// Which bound a declared-size limit enforces, so the refusal names its real cause.
+#[derive(Clone, Copy)]
+pub(crate) enum DeclaredSizeCause {
+    /// Destination free space minus the reserve is the binding bound.
+    FreeSpace { free_bytes: Option<u64> },
+    /// The compression-ratio cap is the binding bound for this archive size.
+    Ratio { archive_bytes: u64 },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DeclaredSizeLimit {
+    pub(crate) max_bytes: u64,
+    pub(crate) cause: DeclaredSizeCause,
+}
+
+fn declared_size_error(limit: DeclaredSizeLimit, declared_bytes: u64) -> String {
+    let needed_gib = declared_bytes as f64 / 1_073_741_824.0;
+    match limit.cause {
+        DeclaredSizeCause::FreeSpace {
+            free_bytes: Some(free_bytes),
+        } => format!(
+            "Not enough free space: this archive needs about {needed_gib:.1} GiB but only {:.1} GiB is available on the destination volume.",
+            free_bytes as f64 / 1_073_741_824.0
+        ),
+        DeclaredSizeCause::FreeSpace { free_bytes: None } => format!(
+            "Not enough free space: this archive needs about {needed_gib:.1} GiB, and the free space on the destination volume could not be read."
+        ),
+        DeclaredSizeCause::Ratio { archive_bytes } => format!(
+            "Archive declares {needed_gib:.1} GiB of extracted data from a {:.1} MiB file, which exceeds the safety ratio for compressed archives.",
+            archive_bytes as f64 / 1_048_576.0
+        ),
+    }
+}
+
+/// Classifies the extract budget for a listed archive: the ratio cap when it
+/// is the smaller bound, otherwise destination free space.
+fn declared_size_limit(
+    archive_path: &std::path::Path,
+    args: &[String],
+    max_bytes: u64,
+) -> DeclaredSizeLimit {
+    let archive_bytes = crate::process::archive_snapshot::archive_input_family_bytes(archive_path);
+    let cause = if max_bytes >= super::extract_ratio_limit(archive_bytes) {
+        DeclaredSizeCause::Ratio { archive_bytes }
+    } else {
+        let free_bytes = super::operation_output_path(args).and_then(|destination| {
+            crate::process::quota::free_space_for_path(&destination)
+                .ok()
+                .flatten()
+        });
+        DeclaredSizeCause::FreeSpace { free_bytes }
+    };
+    DeclaredSizeLimit { max_bytes, cause }
+}
+
 pub(crate) struct SltManifestParser {
     archive_path: String,
-    max_bytes: Option<u64>,
+    declared_limit: Option<DeclaredSizeLimit>,
     limits: ListingLimits,
     line: Vec<u8>,
     line_overflowed: bool,
@@ -170,19 +243,24 @@ pub(crate) struct SltManifestParser {
     seen_member: bool,
     summary: ArchiveManifestSummary,
     current_member: Option<String>,
+    current_member_excluded: bool,
     pathless: PathlessRecord,
     warnings: WarningScan,
 }
 
 impl SltManifestParser {
-    pub(crate) fn new(archive_path: &str, max_bytes: Option<u64>) -> Self {
-        Self::with_limits(archive_path, max_bytes, ListingLimits::default())
+    pub(crate) fn new(archive_path: &str, declared_limit: Option<DeclaredSizeLimit>) -> Self {
+        Self::with_limits(archive_path, declared_limit, ListingLimits::default())
     }
 
-    fn with_limits(archive_path: &str, max_bytes: Option<u64>, limits: ListingLimits) -> Self {
+    fn with_limits(
+        archive_path: &str,
+        declared_limit: Option<DeclaredSizeLimit>,
+        limits: ListingLimits,
+    ) -> Self {
         Self {
             archive_path: archive_path.to_string(),
-            max_bytes,
+            declared_limit,
             limits,
             line: Vec::new(),
             line_overflowed: false,
@@ -191,6 +269,7 @@ impl SltManifestParser {
             seen_member: false,
             summary: ArchiveManifestSummary::default(),
             current_member: None,
+            current_member_excluded: false,
             pathless: PathlessRecord::default(),
             warnings: WarningScan::default(),
         }
@@ -335,23 +414,29 @@ impl SltManifestParser {
                 return Ok(());
             }
             self.seen_member = true;
-            self.summary.entry_count = self.summary.entry_count.saturating_add(1);
-            if self.summary.entry_count > self.limits.max_entries {
-                return Err(format!(
-                    "Archive exceeds the safety limit of {} entries.",
-                    self.limits.max_entries
-                ));
-            }
-            self.summary.path_bytes = self
-                .summary
-                .path_bytes
-                .checked_add(path.len() as u64)
-                .ok_or_else(|| "Archive path-name safety counter overflowed.".to_string())?;
-            if self.summary.path_bytes > self.limits.max_path_bytes {
-                return Err(format!(
-                    "Archive exceeds the {} MiB aggregate path-name safety limit.",
-                    self.limits.max_path_bytes / (1024 * 1024)
-                ));
+            // Excluded metadata members are never extracted, so they neither
+            // consume the entry/path budgets nor contribute declared bytes.
+            // Their path is still checked: a listing must stay fail-closed.
+            self.current_member_excluded = extract_member_is_finder_metadata(path);
+            if !self.current_member_excluded {
+                self.summary.entry_count = self.summary.entry_count.saturating_add(1);
+                if self.summary.entry_count > self.limits.max_entries {
+                    return Err(format!(
+                        "Archive exceeds the safety limit of {} entries.",
+                        self.limits.max_entries
+                    ));
+                }
+                self.summary.path_bytes = self
+                    .summary
+                    .path_bytes
+                    .checked_add(path.len() as u64)
+                    .ok_or_else(|| "Archive path-name safety counter overflowed.".to_string())?;
+                if self.summary.path_bytes > self.limits.max_path_bytes {
+                    return Err(format!(
+                        "Archive exceeds the {} MiB aggregate path-name safety limit.",
+                        self.limits.max_path_bytes / (1024 * 1024)
+                    ));
+                }
             }
             self.current_member = Some(path.to_string());
             if archive_member_path_is_unsafe(path) {
@@ -409,7 +494,7 @@ impl SltManifestParser {
             }
             return Ok(());
         }
-        if self.current_member.is_some() {
+        if self.current_member.is_some() && !self.current_member_excluded {
             if let Some(size) = line.strip_prefix("Size = ") {
                 let size = size.parse::<u64>().map_err(|_| {
                     "Archive listing contains an invalid declared member size.".to_string()
@@ -421,12 +506,9 @@ impl SltManifestParser {
                     .ok_or_else(|| {
                         "Archive declared size overflowed its safety counter.".to_string()
                     })?;
-                if let Some(max_bytes) = self.max_bytes {
-                    if self.summary.declared_bytes > max_bytes {
-                        return Err(format!(
-                            "Archive declares more than {:.1} GiB of extracted data.",
-                            max_bytes as f64 / 1_073_741_824.0
-                        ));
+                if let Some(limit) = self.declared_limit {
+                    if self.summary.declared_bytes > limit.max_bytes {
+                        return Err(declared_size_error(limit, self.summary.declared_bytes));
                     }
                 }
             }
@@ -458,12 +540,9 @@ impl SltManifestParser {
             summary.declared_bytes = size.parse::<u64>().map_err(|_| {
                 "Archive listing contains an invalid declared member size.".to_string()
             })?;
-            if let Some(max_bytes) = self.max_bytes {
-                if summary.declared_bytes > max_bytes {
-                    return Err(format!(
-                        "Archive declares more than {:.1} GiB of extracted data.",
-                        max_bytes as f64 / 1_073_741_824.0
-                    ));
+            if let Some(limit) = self.declared_limit {
+                if summary.declared_bytes > limit.max_bytes {
+                    return Err(declared_size_error(limit, summary.declared_bytes));
                 }
             }
         }
@@ -477,7 +556,11 @@ fn parse_slt_archive_manifest(
     archive_path: &str,
     max_bytes: Option<u64>,
 ) -> Result<ArchiveManifestSummary, String> {
-    let mut parser = SltManifestParser::new(archive_path, max_bytes);
+    let declared_limit = max_bytes.map(|max_bytes| DeclaredSizeLimit {
+        max_bytes,
+        cause: DeclaredSizeCause::FreeSpace { free_bytes: None },
+    });
+    let mut parser = SltManifestParser::new(archive_path, declared_limit);
     parser.push(slt_output.as_bytes());
     parser.finish()
 }
@@ -782,7 +865,9 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
             .or_else(|| archive_file_identity(&archive_path).ok())
             .ok_or_else(|| "Could not read archive identity for member preflight.".to_string())?;
     let label = "Archive member-safety preflight";
-    let mut listing = SltManifestParser::new(&archive, max_declared_bytes);
+    let declared_limit =
+        max_declared_bytes.map(|max_bytes| declared_size_limit(&archive_path, args, max_bytes));
+    let mut listing = SltManifestParser::new(&archive, declared_limit);
     let collected = collect_registered_preflight(
         app,
         state,
@@ -1419,7 +1504,7 @@ mod streaming_listing_tests {
         assert_eq!(empty.entry_count, 0);
         assert!(parse_slt_archive_manifest(PLAIN_ZIP, ARCHIVE, Some(7))
             .expect_err("declared bytes over the limit")
-            .contains("GiB of extracted data"));
+            .contains("Not enough free space"));
     }
 
     #[test]
@@ -1497,8 +1582,12 @@ mod streaming_listing_tests {
     fn stream_listing_over_256_mib_succeeds_with_bounded_state() {
         const RECORDS: u64 = 700_000;
         let started = std::time::Instant::now();
+        let declared_limit = DeclaredSizeLimit {
+            max_bytes: u64::MAX,
+            cause: DeclaredSizeCause::FreeSpace { free_bytes: None },
+        };
         let mut parser =
-            SltManifestParser::with_limits(ARCHIVE, Some(u64::MAX), ListingLimits::default());
+            SltManifestParser::with_limits(ARCHIVE, Some(declared_limit), ListingLimits::default());
         let mut chunk = Vec::with_capacity(64 * 1024);
         let mut total_bytes: u64 = 0;
         let mut expected_path_bytes: u64 = 0;
